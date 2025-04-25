@@ -1,0 +1,3984 @@
+﻿<template>
+	<view class="content map-container">
+		<!-- 璋冭瘯淇℃伅闈㈡澘 -->
+		<view v-if="showDebug" class="debug-info">
+			<text>鏍囪鏁? {{debugInfo.markerCount}}</text>
+			<text v-if="debugInfo.markerIds.length > 0">ID: {{debugInfo.markerIds.join(', ')}}</text>
+			<text v-if="debugInfo.coords.length > 0">鍧愭爣: {{debugInfo.coords.join(' | ')}}</text>
+			<text>褰撳墠浣嶇疆: {{currentLocation.latitude}}, {{currentLocation.longitude}}</text>
+			<text>澶村儚璺緞: {{userStore.userInfo?.avatar || '鏃?}}</text>
+			<text>瀹屾暣澶村儚URL: {{userAvatar || '鏃?}}</text>
+			<text>浣跨敤鐨勬爣璁? 鐢ㄦ埛鍦ㄨ祫鏂欎腑涓婁紶鐨勫ご鍍?/text>
+			<text>鎬绘爣璁版暟: {{allMarkers.length}}</text>
+			<text>鐢ㄦ埛鏍囪: {{userMarker ? '宸插垱寤? : '鏈垱寤?}}</text>
+			<button @click="forceRefreshMarker(false)">甯歌鍒锋柊</button>
+			<button @click="forceRefreshMarker(true)">寮哄埗浣跨敤涓婁紶澶村儚</button>
+			<button @click="reloadUserInfo">閲嶆柊鍔犺浇鐢ㄦ埛淇℃伅</button>
+			<button @click="clearAvatarCache">娓呴櫎澶村儚缂撳瓨</button>
+			<button @click="showDebug = false">鍏抽棴</button>
+		</view>
+		
+		<!-- 鍦板浘缁勪欢 - 瀹屽杽浜嬩欢澶勭悊 -->
+		<view class="map-wrapper" @click="onMapContainerClick">
+			<div id="map-container" class="map-container"></div>
+		</view>
+		
+		<!-- 浣嶇疆鍏变韩鎻愮ず -->
+		<view v-if="showLocationSharingTip" class="location-share-tip">
+			<view class="tip-content">
+				<text class="tip-text">鎮ㄦ槸鍚︽兂鍦ㄥ湴鍥句笂涓庡叾浠栧疇鍙嬪垎浜偍鐨勪綅缃紵</text>
+				<view class="tip-buttons">
+					<view class="tip-btn cancel-btn" @tap="cancelLocationSharing">鏆備笉鍒嗕韩</view>
+					<view class="tip-btn confirm-btn" @tap="confirmLocationSharing">寮€濮嬪垎浜?/view>
+				</view>
+			</view>
+		</view>
+		
+		<!-- 浣嶇疆鍏变韩鐘舵€佹寚绀哄櫒 -->
+		<view v-if="locationSharingStatusVisible" class="location-sharing-status">
+			<view class="status-icon" :class="{ 'active': isLocationShared }"></view>
+			<text class="status-text">{{ locationSharingStatus }}</text>
+		</view>
+		
+		<!-- 鍦板浘宸ュ叿鏍?-->
+		<view class="toolbar">
+			<view class="toolbar-item" @tap="centerOnUser">
+				<text class="icon">馃搷</text>
+				<text class="toolbar-text">瀹氫綅</text>
+			</view>
+			<view class="toolbar-item" @tap="zoomIn">
+				<text class="icon">鉃?/text>
+				<text class="toolbar-text">鏀惧ぇ</text>
+			</view>
+			<view class="toolbar-item" @tap="zoomOut">
+				<text class="icon">鉃?/text>
+				<text class="toolbar-text">缂╁皬</text>
+			</view>
+		</view>
+		
+		<!-- 寮€濮?鍋滄閬涚嫍鎸夐挳 -->
+		<view class="start-button" @tap="toggleWalkingMode">
+			<view class="start-button-inner" :class="{'active': isWalking}">
+				<text class="start-icon">{{ isWalking ? '鈴癸笍' : '鈻讹笍' }}</text>
+				<text class="start-text">{{ isWalking ? '鍋滄' : '寮€濮? }}</text>
+			</view>
+		</view>
+		
+		<!-- 閬涚嫍鐘舵€佷俊鎭?-->
+		<view class="walking-info" v-if="isWalking">
+			<view class="info-item">
+				<text class="label">璺濈</text>
+				<text class="value">{{ (walkingDistance / 1000).toFixed(2) }}km</text>
+			</view>
+			<view class="info-item">
+				<text class="label">鏃堕棿</text>
+				<text class="value">{{ formatDuration(walkingDuration) }}</text>
+			</view>
+			<view class="info-item">
+				<text class="label">閰嶉€?/text>
+				<text class="value">{{ calculatePace(walkingDistance, walkingDuration) }}</text>
+			</view>
+		</view>
+		
+		<!-- 鐢ㄦ埛淇℃伅寮圭獥 -->
+		<UserInfoPopup
+			v-if="showUserPopup"
+			:user="selectedUser"
+			:pets="selectedUserPets"
+			:is-following="isFollowing"
+			:visible="showUserPopup"
+			@close="closeUserPopup"
+			@message="messageUser"
+			@follow="followUser"
+		/>
+		
+		<!-- 閬涚嫍缁撴潫缁熻寮圭獥 -->
+		<WalkSummaryPopup
+			v-if="showWalkSummary"
+			:duration="walkingDuration"
+			:distance="walkingDistance"
+			:pets="myPets"
+			:selected-pet-index="selectedPetIndex"
+			:share-content="walkShareContent"
+			@close="closeWalkSummary"
+			@share="shareWalkRecord"
+		/>
+		
+		<!-- 涓存椂鎸夐挳 - 鍒囨崲鏄剧ず鐢ㄦ埛澶村儚/榛樿鏍囪 -->
+		<!--
+		<view 
+			@click="toggleMarker" 
+			style="position: absolute; bottom: 220px; right: 20px; background: rgba(0,122,255,0.9); color: white; padding: 10px; border-radius: 5px; z-index: 999;"
+		>
+			鍒囨崲鏍囪
+				</view>
+		-->
+		
+		<!-- 闅愯棌鐨凜anvas鐢ㄤ簬鐢熸垚鏈湴鍥剧墖 -->
+		<canvas canvas-id="debug-canvas" style="width: 40px; height: 40px; position: absolute; left: -100px;"></canvas>
+	</view>
+</template>
+
+<script>
+import { ref, computed, onMounted, onUnmounted, onBeforeUnmount, nextTick, watch } from 'vue';
+import { useUserStore } from '@/store/user.js';
+import { usePetStore } from '@/store/pet.js';
+import { useLocationStore } from '@/store/location.js';
+import { formatDuration, calculatePace, calculateDistance } from '@/utils/amap.js';
+import api from '@/utils/api.js'; // 娣诲姞API瀵煎叆
+
+// 淇缁勪欢瀵煎叆璺緞
+import UserInfoPopup from '@/components/map/UserInfoPopup.vue';
+import WalkSummaryPopup from '@/components/map/WalkSummaryPopup.vue';
+
+export default {
+	components: {
+		UserInfoPopup,
+		WalkSummaryPopup
+	},
+	setup() {
+		const userStore = useUserStore();
+		const petStore = usePetStore();
+		const locationStore = useLocationStore();
+		
+		// 楂樺痉鍦板浘瀵硅薄
+		const map = ref(null);
+		// 鐢ㄦ埛鏍囪瀵硅薄 - 瀹氫箟userMarkers涓虹┖瀵硅薄
+		const userMarkers = {};
+		
+		// 鑾峰彇鎴栧垱寤哄湴鍥惧疄渚嬬殑閫氱敤鏂规硶
+		const getMapInstance = () => {
+			if (map.value) {
+				return map.value;
+			}
+			
+			console.error('鍦板浘鏈垵濮嬪寲锛屽皾璇曡幏鍙栧湴鍥惧疄渚?);
+			
+			// First try to get from global window object
+			if (typeof window !== 'undefined' && window.__dogRunMapInstance) {
+				console.log('浠庡叏灞€鍙橀噺鑾峰彇鍦板浘瀹炰緥');
+				map.value = window.__dogRunMapInstance;
+				return map.value;
+			}
+			
+			// Then try to get from DOM element
+			if (typeof window !== 'undefined' && window.AMap) {
+				const mapContainer = document.getElementById('map-container');
+				if (mapContainer && mapContainer.__amap_instance__) {
+					map.value = mapContainer.__amap_instance__;
+					console.log('宸蹭粠DOM鍏冪礌鑾峰彇鍦板浘瀹炰緥');
+					return map.value;
+				}
+				
+				// Try to recreate the map if all else fails
+				console.log('灏濊瘯閲嶆柊鍒涘缓鍦板浘瀹炰緥');
+				if (mapContainer) {
+					try {
+						map.value = new window.AMap.Map('map-container', {
+							zoom: 15,
+							center: [currentLocation.value.longitude, currentLocation.value.latitude],
+							resizeEnable: true
+						});
+						window.__dogRunMapInstance = map.value;
+						mapContainer.__amap_instance__ = map.value;
+						console.log('鍦板浘瀹炰緥宸查噸鏂板垱寤?);
+						return map.value;
+					} catch (err) {
+						console.error('鏃犳硶鍒涘缓鍦板浘瀹炰緥:', err);
+						throw new Error('鏃犳硶鍒涘缓鍦板浘瀹炰緥: ' + err.message);
+					}
+				} else {
+					throw new Error('鏃犳硶鑾峰彇鍦板浘瀹瑰櫒');
+				}
+			}
+			
+			throw new Error('鍦板浘API鏈姞杞?);
+		};
+		
+		// 鑾峰彇瀹屾暣澶村儚URL鐨勫伐鍏峰嚱鏁?		function getFullAvatarUrl(avatarPath, debug = false) {
+			if (debug) {
+				console.log('getFullAvatarUrl澶勭悊:', avatarPath);
+			}
+			
+			// 濡傛灉娌℃湁鎻愪緵澶村儚锛岃繑鍥為粯璁ゅご鍍?			if (!avatarPath) {
+				if (debug) console.log('娌℃湁鎻愪緵avatarPath锛岃繑鍥為粯璁ゅご鍍?);
+				return defaultAvatarBase64;
+			}
+			
+			// 妫€鏌ユ槸鍚︽槸base64鍥剧墖
+			if (avatarPath.startsWith('data:image/')) {
+				if (debug) console.log('鏄痓ase64鍥剧墖锛岀洿鎺ヨ繑鍥?);
+				return avatarPath;
+			}
+			
+			// 妫€鏌ユ槸鍚﹀凡缁忔槸http鎴杊ttps寮€澶寸殑URL
+			if (avatarPath.startsWith('http://') || avatarPath.startsWith('https://')) {
+				if (debug) console.log('宸茬粡鏄畬鏁碪RL锛岀洿鎺ヨ繑鍥?', avatarPath);
+				// 纭繚URL鏈夋晥锛屽彲浠ュ皾璇曠Щ闄RL涓殑鐗规畩瀛楃
+				const cleanUrl = avatarPath.replace(/["']/g, '');
+				return cleanUrl;
+			}
+			
+			// 鑾峰彇鍩虹API URL
+			const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+			
+			// 濡傛灉鏄浉瀵硅矾寰勶紝娣诲姞鍩虹URL
+			if (avatarPath.startsWith('/uploads/')) {
+				const fullUrl = baseUrl + avatarPath;
+				if (debug) console.log('鏄笂浼犺矾寰勶紝娣诲姞鍩虹URL:', fullUrl);
+				return fullUrl;
+			}
+			
+			// 濡傛灉鏄笉甯﹀墠缂€鐨剈ploads鐩綍璺緞锛屾坊鍔犲墠瀵兼枩鏉犲拰鍩虹URL
+			if (avatarPath.startsWith('uploads/')) {
+				const fullUrl = baseUrl + '/' + avatarPath;
+				if (debug) console.log('鏄笉甯﹀墠瀵兼枩鏉犵殑涓婁紶璺緞锛屾坊鍔犲熀纭€URL:', fullUrl);
+				return fullUrl;
+			}
+			
+			// 鍏朵粬鎯呭喌锛屼綔涓虹浉瀵硅矾寰勫鐞?			if (debug) console.log('鏈瘑鍒殑璺緞绫诲瀷锛屽皾璇曟坊鍔犲熀纭€URL:', avatarPath);
+			// 纭繚璺緞涓嶄互鏂滄潬寮€澶?			const path = avatarPath.startsWith('/') ? avatarPath.substring(1) : avatarPath;
+			return baseUrl + '/' + path;
+		}
+		
+		const mapScale = ref(16);
+		const currentLocation = ref({ latitude: 39.9087, longitude: 116.3975 });
+		const markers = ref([]);
+		const locationUpdateInterval = ref(null);
+		const nearbyUsersUpdateInterval = ref(null);
+		
+		const nearbyUsers = ref([]);
+		
+		const isWalking = ref(false);
+		const walkingPath = ref([]);
+		const walkingDistance = ref(0);
+		const walkingDuration = ref(0);
+		const walkingStartTime = ref(null);
+		const walkingTimer = ref(null);
+		const walkingLocations = ref([]);
+		
+		const showUserPopup = ref(false);
+		const selectedUser = ref(null);
+		const selectedUserPets = ref([]);
+		const selectedUserFollowStatus = ref(false); // 娣诲姞缂哄け鐨勫彉閲?		const isFollowing = ref(false);
+		
+		const showWalkSummary = ref(false);
+		const walkShareContent = ref('');
+		const myPets = ref([]);
+		const myPetsNames = computed(() => myPets.value.map(p => p.name));
+		const selectedPetIndex = ref(0);
+		
+		// 娣诲姞缂哄け鐨剆howDebug ref
+		const showDebug = ref(true); // 涓存椂鎵撳紑璋冭瘯瑙嗗浘锛屽府鍔╂帓鏌ラ棶棰?		const debugInfo = ref({
+			markerCount: 0,
+			markerIds: [],
+			coords: []
+		});
+		
+		// 鏂板浣嶇疆鍏变韩鎻愮ず鎺у埗
+		const showLocationSharingTip = ref(false);
+		const isLocationShared = ref(true); // 榛樿鍏变韩浣嶇疆
+
+		// 鐢ㄦ埛鏈濆悜瑙掑害
+		const userHeading = ref(0);
+
+		// 鐢ㄤ簬榛樿澶村儚 - 浣跨敤鍐呰仈base64纭繚鍙敤
+		const defaultAvatarBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAAXNSR0IArs4c6QAAAQNJREFUeF7t1LENACAMBDFYm+WDxAhc6/TXWK/sdWaW+xbYAL/tXgiw+QGMfgABVoHY+4EAo0DMLRBgFIi5BQKMAjG3QIBRIOYWCDAKxNwCAUaBmFsgwCgQcwsEGAViboEAo0DMLRBgFIi5BQKMAjG3QIBRIOYWCDAKxNwCAUaBmFsgwCgQcwsEGAViboEAo0DMLRBgFIi5BQKMAjG3QIBRIOYWCDAKxNwCAUaBmFsgwCgQcwsEGAViboEAo0DMLRBgFIi5BQKMAjG3QIBRIOYWCDAKxPwCxDvF0aa/hxYAAAAASUVORK5CYII=';
+		
+		// 鐢ㄦ埛澶村儚璁＄畻灞炴€?		const userAvatar = computed(() => {
+			// 浣跨敤userStore涓殑userInfo鎴杣ser锛屾牴鎹瓨鍦ㄤ笌鍚?			const userInfo = userStore.userInfo || userStore.user || {};
+			
+			// 璋冭瘯鐢ㄦ埛鐘舵€?			console.log('鐢ㄦ埛淇℃伅鐘舵€?', {
+				'userStore.userAvatar瀛樺湪': !!userStore.userAvatar,
+				'userStore.userInfo瀛樺湪': !!userStore.userInfo,
+				'userStore.user瀛樺湪': !!userStore.user,
+				'澶村儚璺緞': userInfo.avatar || userStore.userAvatar
+			});
+			
+			// 鍏堝皾璇曚粠userStore鐨勮绠楀睘鎬ц幏鍙?			if (userStore.userAvatar) {
+				return getFullAvatarUrl(userStore.userAvatar, true);
+			}
+			
+			// 鍐嶅皾璇曚粠userInfo鎴杣ser瀵硅薄鑾峰彇avatar
+			if (userInfo.avatar) {
+				// 璋冭瘯鐢ㄦ埛澶村儚鐩稿叧淇℃伅
+				console.log('澶村儚璁＄畻缁嗚妭:', {
+					鍘熷璺緞: userInfo.avatar,
+					鏄惁浠ヤ笂浼犺矾寰勫紑澶? userInfo.avatar.startsWith('/uploads/'),
+					鐜鍙橀噺: import.meta.env.VITE_API_URL || 'http://localhost:5000'
+				});
+				
+				return getFullAvatarUrl(userInfo.avatar, true);
+			}
+			
+			// 杩斿洖榛樿澶村儚
+			console.log('鏈壘鍒扮敤鎴峰ご鍍忥紝浣跨敤榛樿钃濊壊澶村儚');
+			return defaultAvatarBase64;
+		});
+		
+		// 鐢ㄦ埛浣嶇疆鏍囪
+		const userMarker = computed(() => {
+			if (!currentLocation.value || !currentLocation.value.latitude) {
+				return null;
+			}
+			
+			// 鐩存帴浣跨敤userAvatar璁＄畻灞炴€ц幏鍙栧畬鏁村ご鍍廢RL
+			let iconPath = userAvatar.value;
+			
+			console.log('鍒涘缓鐢ㄦ埛鏍囪锛屽ご鍍忚矾寰?', iconPath);
+			
+			return {
+				id: 'user-location',
+				latitude: currentLocation.value.latitude,
+				longitude: currentLocation.value.longitude,
+				iconPath: iconPath,
+				width: 40,
+				height: 40,
+				rotate: userHeading.value,
+				anchor: {
+					x: 0.5,
+					y: 0.5
+				}
+			};
+		});
+		
+		// 鍚堝苟鎵€鏈夋爣璁扮偣
+		const allMarkers = computed(() => {
+			let result = [...markers.value];
+			
+			// 娣诲姞鐢ㄦ埛浣嶇疆鏍囪
+			if (userMarker.value) {
+				// 纭繚鐢ㄦ埛鏍囪鎬绘槸鍦ㄦ渶椤跺眰锛屽厛绉婚櫎鐩稿悓ID鐨勬棫鏍囪
+				result = result.filter(marker => marker.id !== 'user-location');
+				// 娣诲姞鐢ㄦ埛鏍囪
+				result.push(userMarker.value);
+				console.log('娣诲姞鐢ㄦ埛浣嶇疆鏍囪:', userMarker.value);
+			} else {
+				// 濡傛灉娌℃湁鐢ㄦ埛鏍囪浣嗘湁浣嶇疆锛屽垱寤轰竴涓复鏃舵爣璁?				if (currentLocation.value && currentLocation.value.latitude) {
+					const tempMarker = {
+						id: 'user-location',
+						latitude: currentLocation.value.latitude,
+						longitude: currentLocation.value.longitude,
+						iconPath: userAvatar.value, // 浣跨敤userAvatar璁＄畻灞炴€?						width: 40,
+						height: 40,
+						rotate: userHeading.value,
+						anchor: {
+							x: 0.5,
+							y: 0.5
+						}
+					};
+					result.push(tempMarker);
+					console.log('娣诲姞涓存椂鐢ㄦ埛鏍囪:', tempMarker);
+				} else {
+					console.warn('鐢ㄦ埛浣嶇疆鏍囪鏈垱寤猴紝涓旀病鏈変綅缃俊鎭?);
+				}
+			}
+			
+			return result;
+		});
+		
+		// 鏇存柊璋冭瘯淇℃伅
+		function updateDebugInfo() {
+			debugInfo.value = {
+				markerCount: markers.value.length + allMarkers.value.length,
+				markerIds: markers.value.map(m => m.id).concat(allMarkers.value.map(m => m.id)),
+				coords: currentLocation.value ? [currentLocation.value.latitude.toFixed(6), currentLocation.value.longitude.toFixed(6)] : []
+			};
+		}
+		
+		// 寮€濮嬩綅缃叡浜?		function startLocationSharing() {
+			if (!isLocationShared.value) return;
+			
+			try {
+				// 璁板綍浣嶇疆鍏变韩淇℃伅
+				console.log('鏇存柊浣嶇疆鍏变韩:', {
+					latitude: currentLocation.value.latitude,
+					longitude: currentLocation.value.longitude
+				});
+				
+				// 浠呭湪鏈湴璁板綍浣嶇疆锛屼笉璋冪敤API
+				console.log('浣嶇疆鍏变韩宸插湪鏈湴鏇存柊锛堜笉璋冪敤API锛?);
+				
+				// 鍙€夛細濡傛灉浣嶇疆API瀛樺湪锛屽皾璇曡皟鐢ㄤ絾蹇界暐閿欒
+				try {
+					if (locationStore && typeof locationStore.updateLocation === 'function') {
+						locationStore.updateLocation({
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							timestamp: new Date().toISOString()
+						}).catch(error => {
+							// 蹇界暐API閿欒锛屼粎璁板綍鏃ュ織
+							console.warn('鏇存柊浣嶇疆API璋冪敤澶辫触锛堝凡蹇界暐锛?', error);
+						});
+					}
+				} catch (apiError) {
+					// 蹇界暐API閿欒
+					console.warn('浣嶇疆API璋冪敤灏濊瘯澶辫触锛堝凡蹇界暐锛?', apiError);
+				}
+			} catch (error) {
+				console.error('鏇存柊浣嶇疆鍏变韩鐘舵€佸け璐?', error);
+			}
+		}
+		
+		// 寮€濮嬭幏鍙栦綅缃殑鍑芥暟
+		function startGettingLocation() {
+			console.log('寮€濮嬭幏鍙栦綅缃?..');
+			
+			// 寮€濮嬬洃鍚綅缃?			startLocationWatch();
+			
+			// 鑾峰彇鎴戠殑瀹犵墿
+			fetchMyPets();
+			
+			// 鍒濆鍖栧湴鍥炬爣璁?			setTimeout(() => {
+				if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+					console.log('浣嶇疆宸茶幏鍙栵紝鍒濆鍖栫敤鎴锋爣璁?);
+					toggleMarker();
+				}
+			}, 2000);
+		}
+		
+		// 鑾峰彇鐢ㄦ埛闄勮繎鐨勫叾浠栫敤鎴?		async function getNearbyUsers() {
+			try {
+				if (!isLocationShared.value) {
+					console.log('浣嶇疆鍏变韩鏈紑鍚紝涓嶈幏鍙栭檮杩戠敤鎴?);
+					return Promise.resolve({ success: false, message: '浣嶇疆鍏变韩鏈紑鍚? });
+				}
+				
+				if (!currentLocation.value || !currentLocation.value.latitude || !currentLocation.value.longitude) {
+					console.error('褰撳墠浣嶇疆涓嶅彲鐢紝鏃犳硶鑾峰彇闄勮繎鐢ㄦ埛');
+					return Promise.reject(new Error('褰撳墠浣嶇疆涓嶅彲鐢?));
+				}
+				
+				console.log('鑾峰彇闄勮繎鐢ㄦ埛...');
+				
+				// 鍦ㄥ紑鍙戠幆澧冧腑锛岀‘淇濇坊鍔犲綋鍓嶇敤鎴峰埌nearbyUsers
+				if (process.env.NODE_ENV === 'development') {
+					console.log('寮€鍙戠幆澧? 娣诲姞褰撳墠鐢ㄦ埛鍒伴檮杩戠敤鎴峰垪琛?);
+					
+					// 纭繚鑷冲皯鏈夊綋鍓嶇敤鎴风殑淇℃伅
+					if (userStore.userInfo && currentLocation.value) {
+						// 鍒涘缓鍖呭惈浣嶇疆淇℃伅鐨勫綋鍓嶇敤鎴锋暟鎹?						const currentUser = {
+							...userStore.userInfo,
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							lastUpdated: new Date().toISOString()
+						};
+						
+						// 纭繚鍙湁涓€鏉¤褰?						nearbyUsers.value = [currentUser];
+						console.log('宸叉坊鍔犲綋鍓嶇敤鎴峰埌闄勮繎鐢ㄦ埛鍒楄〃:', currentUser);
+						
+						// 鏇存柊鏍囪
+						updateMarkers();
+						
+						return Promise.resolve({ 
+							success: true, 
+							message: '寮€鍙戠幆澧冨彧杩斿洖褰撳墠鐢ㄦ埛',
+							data: [currentUser] 
+						});
+					}
+				}
+				
+				// 璋冪敤API鑾峰彇闄勮繎鐢ㄦ埛
+				const response = await locationStore.getNearbyUsers({
+					latitude: currentLocation.value.latitude,
+					longitude: currentLocation.value.longitude,
+					maxDistance: 5000 // 鎼滅储5鍏噷鑼冨洿鍐呯殑鐢ㄦ埛
+				});
+				
+				if (response && response.success && Array.isArray(response.data)) {
+					// 杩囨护鎺夎嚜宸辩殑璁板綍锛屽洜涓烘垜浠細鎵嬪姩娣诲姞褰撳墠鐢ㄦ埛浣嶇疆
+					let otherUsers = [];
+					if (userStore.userInfo && userStore.userInfo.id) {
+						otherUsers = response.data.filter(user => 
+							user.id !== userStore.userInfo.id
+						);
+						console.log('杩囨护鍚庣殑鍏朵粬鐢ㄦ埛鏁伴噺:', otherUsers.length);
+					} else {
+						otherUsers = response.data;
+						console.log('鏈繃婊ょ殑鐢ㄦ埛鏁伴噺:', otherUsers.length);
+					}
+					
+					// 纭繚褰撳墠鐢ㄦ埛浣嶇疆淇℃伅瀛樺湪
+					if (userStore.userInfo && currentLocation.value) {
+						// 鍒涘缓鍖呭惈浣嶇疆淇℃伅鐨勫綋鍓嶇敤鎴锋暟鎹?						const currentUser = {
+							...userStore.userInfo,
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							lastUpdated: new Date().toISOString()
+						};
+						
+						// 鍚堝苟鍏朵粬鐢ㄦ埛鍜屽綋鍓嶇敤鎴?						if (otherUsers.length > 0) {
+							nearbyUsers.value = [currentUser, ...otherUsers];
+							console.log('鍚堝苟鍚庣殑鐢ㄦ埛鍒楄〃:', nearbyUsers.value.length, '涓敤鎴?(褰撳墠鐢ㄦ埛 + 鍏朵粬鐢ㄦ埛)');
+						} else {
+							nearbyUsers.value = [currentUser];
+							console.log('鐢ㄦ埛鍒楄〃鍙寘鍚綋鍓嶇敤鎴?);
+						}
+					} else {
+						nearbyUsers.value = otherUsers;
+						console.log('鐢ㄦ埛鍒楄〃涓嶅寘鍚綋鍓嶇敤鎴?鏈櫥褰曟垨鏃犱綅缃?');
+					}
+					
+					updateMarkers();
+					console.log('鑾峰彇鍒伴檮杩戠敤鎴?', nearbyUsers.value.length);
+					
+					// 璁板綍鎵€鏈夌敤鎴稩D锛屾柟渚胯皟璇?					console.log('鐢ㄦ埛ID鍒楄〃:', nearbyUsers.value.map(u => u?.id || '鏈煡ID'));
+					
+					return Promise.resolve(response);
+				} else {
+					console.log('鏈幏鍙栧埌闄勮繎鐢ㄦ埛鎴栨牸寮忛敊璇?', response);
+					
+					// 纭繚鍗充娇API杩斿洖閿欒锛屼篃瑕佹坊鍔犲綋鍓嶇敤鎴?					if (userStore.userInfo && currentLocation.value) {
+						const currentUser = {
+							...userStore.userInfo,
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							lastUpdated: new Date().toISOString()
+						};
+						
+						nearbyUsers.value = [currentUser];
+						console.log('API澶辫触锛屽彧鏄剧ず褰撳墠鐢ㄦ埛');
+						updateMarkers();
+					} else {
+						nearbyUsers.value = [];
+						console.log('API澶辫触锛屼笖鏃犲綋鍓嶇敤鎴蜂俊鎭紝nearbyUsers涓虹┖');
+					}
+					
+					return Promise.resolve({ success: false, message: '鏃犻檮杩戠敤鎴?, response });
+				}
+			} catch (error) {
+				console.error('鑾峰彇闄勮繎鐢ㄦ埛澶辫触', error);
+				
+				// 鍗充娇鍑洪敊涔熸坊鍔犲綋鍓嶇敤鎴?				if (userStore.userInfo && currentLocation.value) {
+					const currentUser = {
+						...userStore.userInfo,
+						latitude: currentLocation.value.latitude,
+						longitude: currentLocation.value.longitude,
+						lastUpdated: new Date().toISOString()
+					};
+					
+					nearbyUsers.value = [currentUser];
+					console.log('寮傚父鎯呭喌涓嬶紝鍙樉绀哄綋鍓嶇敤鎴?);
+					updateMarkers();
+				} else {
+					nearbyUsers.value = [];
+					console.log('寮傚父鎯呭喌涓嬶紝涓旀棤褰撳墠鐢ㄦ埛淇℃伅锛宯earbyUsers涓虹┖');
+				}
+				
+				return Promise.reject(error);
+			}
+		}
+		
+		// 鏇存柊鍦板浘鏍囪鐐?		function updateMarkers() {
+			try {
+				if (!nearbyUsers.value || !nearbyUsers.value.length) {
+					console.log('娌℃湁闄勮繎鐢ㄦ埛锛屾竻闄ら潪鑷韩鏍囪');
+					
+					// 寮€鍙戞ā寮忎笅锛岀Щ闄ゆ墍鏈夐潪鑷繁鐨勬爣璁?					if (map.value && allMarkers.value) {
+						allMarkers.value.forEach(marker => {
+							// 淇濈暀鑷繁鐨勬爣璁帮紝绉婚櫎鍏朵粬鏍囪
+							const markerUserId = marker?.extData?.userId;
+							const currentUserId = userStore.userInfo?.id;
+							
+							console.log('鏍囪ID:', markerUserId, '褰撳墠鐢ㄦ埛ID:', currentUserId);
+							
+							// 濡傛灉涓嶆槸褰撳墠鐢ㄦ埛鐨勬爣璁帮紝鍒欑Щ闄?							if (markerUserId && currentUserId && markerUserId !== currentUserId) {
+								console.log('绉婚櫎闈炴湰浜烘爣璁?', markerUserId);
+								map.value.remove(marker);
+							}
+						});
+						
+						// 杩囨护allMarkers鏁扮粍锛屽彧淇濈暀鑷繁鐨勬爣璁?						allMarkers.value = allMarkers.value.filter(marker => {
+							return !marker.extData || !marker.extData.userId || 
+								marker.extData.userId === userStore.userInfo?.id;
+						});
+					}
+					return;
+				}
+				
+				console.log('鏇存柊闄勮繎鐢ㄦ埛鏍囪锛岀敤鎴锋暟閲?', nearbyUsers.value.length);
+				
+				// 鍦ㄥ紑鍙戠幆澧冧腑锛岃烦杩囧垱寤哄叾浠栫敤鎴锋爣璁扮殑閫昏緫
+				if (process.env.NODE_ENV === 'development') {
+					console.log('寮€鍙戠幆澧冿紝浠呮樉绀鸿嚜宸辩殑鏍囪');
+					return;
+				}
+				
+				// 绉婚櫎鎵€鏈変箣鍓嶇殑鐢ㄦ埛鏍囪锛堥櫎浜嗚嚜宸辩殑锛?				if (allMarkers.value && allMarkers.value.length > 0) {
+					allMarkers.value.forEach(marker => {
+						if (marker && marker.extData && marker.extData.userId !== userStore.userInfo.id) {
+							marker.setMap(null);
+						}
+					});
+				}
+				
+				// 澶勭悊姣忎釜鐢ㄦ埛锛屽垱寤烘柊鏍囪
+				nearbyUsers.value.forEach(user => {
+					// 璺宠繃鑷繁鐨勬爣璁?					if (!user || !user.id || (userStore.userInfo && user.id === userStore.userInfo.id)) {
+						return;
+					}
+					
+					// 纭繚鏈夌粡绾害
+					if (!user.latitude || !user.longitude) {
+						console.log('鐢ㄦ埛缂哄皯浣嶇疆淇℃伅:', user.nickname || user.username);
+						return;
+					}
+					
+					// 鏄庣‘璁板綍姝ｅ湪澶勭悊鐨勭敤鎴稩D锛屾柟渚胯皟璇?					const userId = String(user.id);
+					const position = [user.longitude, user.latitude];
+					
+					console.log(`鍒涘缓鐢ㄦ埛[${userId}]鐨勬爣璁?`, user.nickname || user.username);
+					
+					// 澶勭悊澶村儚璺緞
+					let avatarUrl = user.userAvatar || user.avatar;
+					avatarUrl = getFullAvatarUrl(avatarUrl, true);
+					
+					console.log('澶勭悊鐢ㄦ埛鏍囪:', userId, user.nickname, '澶村儚:', avatarUrl ? '鏈? : '鏃?);
+					
+					// 濡傛灉鏄痓ase64鍥惧儚锛岀洿鎺ヤ娇鐢?					if (avatarUrl && avatarUrl.startsWith('data:image/')) {
+						createUserMarkerWithImage(userId, position, avatarUrl);
+						return;
+					}
+					
+					// 浣跨敤Image瀵硅薄鍔犺浇澶村儚
+					const img = new Image();
+					img.crossOrigin = 'anonymous';
+					img.onload = () => {
+						// 鍥剧墖鍔犺浇鎴愬姛锛屽垱寤虹敤鎴锋爣璁?						createUserMarkerWithImage(userId, position, avatarUrl);
+					};
+					img.onerror = () => {
+						// 鍥剧墖鍔犺浇澶辫触锛屼娇鐢ㄩ粯璁ゆ爣璁?						console.error('鑾峰彇澶村儚澶辫触锛岀敤鎴稩D:', userId);
+						createDefaultMarker(position, userId);
+					};
+					img.src = avatarUrl;
+					
+					// 涓洪槻姝㈠浘鐗囧姞杞借秴鏃讹紝璁剧疆3绉掑悗浣跨敤榛樿鏍囪
+					setTimeout(() => {
+						if (!img.complete || img.naturalWidth === 0) {
+							console.error('澶村儚鍔犺浇瓒呮椂锛岀敤鎴稩D:', userId);
+							createDefaultMarker(position, userId);
+						}
+					}, 3000);
+				});
+				
+				console.log('鍦板浘鏍囪鏇存柊瀹屾垚');
+			} catch (error) {
+				console.error('鏇存柊鍦板浘鏍囪鏃跺嚭閿?', error);
+			}
+		}
+		
+		// 鑾峰彇鐢ㄦ埛瀹犵墿淇℃伅
+		async function fetchUserPets(userId) {
+			try {
+				console.log('寮€濮嬭幏鍙栫敤鎴峰疇鐗╀俊鎭紝鐢ㄦ埛ID:', userId);
+				
+				// 浣跨敤姝ｇ‘鐨凙PI璺緞
+				const response = await locationStore.getUserPets(userId);
+				
+				console.log('鑾峰彇瀹犵墿淇℃伅鍝嶅簲:', response);
+				
+				if (response && response.data && Array.isArray(response.data)) {
+					selectedUserPets.value = response.data;
+					console.log('鎴愬姛鍔犺浇瀹犵墿鏁伴噺:', selectedUserPets.value.length);
+					return response.data;
+				} else if (response && Array.isArray(response)) {
+					// 鍏煎鐩存帴杩斿洖鏁扮粍鐨勬儏鍐?					selectedUserPets.value = response;
+					console.log('鎴愬姛鍔犺浇瀹犵墿鏁伴噺(鐩存帴鏁扮粍):', selectedUserPets.value.length);
+					return response;
+				} else {
+					console.warn('瀹犵墿鏁版嵁鏍煎紡涓嶆纭?', response);
+					selectedUserPets.value = [];
+					return [];
+				}
+			} catch (error) {
+				console.error('鑾峰彇鐢ㄦ埛瀹犵墿澶辫触', error);
+				selectedUserPets.value = [];
+				throw error; // 璁╄皟鐢ㄨ€呭鐞嗛敊璇?			}
+		}
+
+		// 妫€鏌ユ槸鍚﹀叧娉ㄨ鐢ㄦ埛
+		async function checkFollowStatus(userId) {
+			try {
+				console.log('寮€濮嬫鏌ュ叧娉ㄧ姸鎬侊紝鐢ㄦ埛ID:', userId);
+				
+				// 浣跨敤姝ｇ‘鐨凙PI璺緞
+				const response = await locationStore.checkFollowStatus(userId);
+				
+				console.log('妫€鏌ュ叧娉ㄧ姸鎬佸搷搴?', response);
+				
+				if (response && (response.data === true || response.following === true)) {
+					isFollowing.value = true;
+				} else {
+					isFollowing.value = false;
+				}
+				
+				console.log('鍏虫敞鐘舵€?', isFollowing.value ? '宸插叧娉? : '鏈叧娉?);
+				return isFollowing.value;
+			} catch (error) {
+				console.error('妫€鏌ュ叧娉ㄧ姸鎬佸け璐?, error);
+				isFollowing.value = false; // 鍑洪敊鏃堕粯璁や负鏈叧娉?				return false;
+			}
+		}
+		
+		// 鑾峰彇鎴戠殑瀹犵墿鍒楄〃
+		async function fetchMyPets() {
+			try {
+				// 浣跨敤姝ｇ‘鐨凙PI璺緞
+				const response = await petStore.fetchPets();
+				
+				if (response && Array.isArray(response)) {
+					myPets.value = response;
+				} else {
+					myPets.value = [];
+				}
+			} catch (error) {
+				console.error('鑾峰彇鎴戠殑瀹犵墿澶辫触', error);
+				myPets.value = [];
+			}
+		}
+		
+		// 鍑嗗閬涚嫍璁板綍缁熻淇℃伅
+		function prepareWalkSummary() {
+			const distance = (walkingDistance.value / 1000).toFixed(2);
+			const duration = formatDuration(walkingDuration.value);
+			const pace = calculatePace(walkingDistance.value, walkingDuration.value);
+			const pets = myPetsNames.value.length ? myPetsNames.value.join('銆?) : '鎴戠殑瀹犵墿';
+			
+			walkShareContent.value = `鎴戝甫${pets}閬涗簡${distance}鍏噷锛岀敤鏃?{duration}锛岄厤閫?{pace}锛乣;
+		}
+		
+		// 鏇存柊浣嶇疆骞惰绠楄璧拌窛绂?		function updateLocation(newLocation, heading) {
+			// 璁＄畻涓庝笂涓€浣嶇疆鐨勫彉鍖栨潵鑾峰彇鏈濆悜
+			if (currentLocation.value && currentLocation.value.latitude !== 0) {
+				const dLat = newLocation.latitude - currentLocation.value.latitude;
+				const dLng = newLocation.longitude - currentLocation.value.longitude;
+				
+				// 鍙湁褰撲綅缃彉鍖栬冻澶熸槑鏄炬椂鎵嶆洿鏂版湞鍚?				if (Math.abs(dLat) > 0.00001 || Math.abs(dLng) > 0.00001) {
+					// 璁＄畻鏂瑰悜瑙掑害 (0琛ㄧず鍖楁柟锛岄『鏃堕拡澧炲姞)
+					const calculatedHeading = Math.atan2(dLng, dLat) * 180 / Math.PI;
+					console.log('鏂逛綅璁＄畻锛?, { dLat, dLng, calculatedHeading });
+					userHeading.value = calculatedHeading;
+				}
+			}
+			
+			// 鏇存柊褰撳墠浣嶇疆
+			currentLocation.value = newLocation;
+			console.log('浣嶇疆宸叉洿鏂?', currentLocation.value);
+			
+			// 濡傛灉鎻愪緵浜嗙綏鐩樻湞鍚戯紝浼樺厛浣跨敤
+			if (heading !== undefined) {
+				userHeading.value = heading;
+				console.log('浣跨敤缃楃洏鏈濆悜:', heading);
+			}
+			
+			// 妫€鏌ユ槸鍚﹂渶瑕佹洿鏂扮敤鎴锋爣璁?			// 姣?0绉掓墠鏇存柊鏍囪浠ュ噺杞绘€ц兘璐熸媴
+			if (!window._lastMarkerUpdateTime || (Date.now() - window._lastMarkerUpdateTime > 30000)) {
+				window._lastMarkerUpdateTime = Date.now();
+				console.log('瑙﹀彂瀹氭湡鏍囪鏇存柊');
+				
+				// 浣跨敤toggleMarker鏇存柊鏍囪锛岀‘淇濆彧鏈変竴涓爣璁?				if (userStore.isAuthenticated && userStore.userInfo && userStore.userInfo.id) {
+					console.log('浣跨敤瀹為檯鐢ㄦ埛ID鏇存柊鏍囪:', userStore.userInfo.id);
+					toggleMarker();
+				}
+			}
+			
+			// 濡傛灉姝ｅ湪閬涚嫍锛屾洿鏂拌矾寰勫拰璺濈
+			if (isWalking.value && walkingLocations.value.length > 0) {
+				const lastPoint = walkingLocations.value[walkingLocations.value.length - 1];
+				const distance = calculateDistance(
+					lastPoint.latitude, lastPoint.longitude, 
+					newLocation.latitude, newLocation.longitude
+				);
+				
+				// 濡傛灉璺濈鍙樺寲澶т簬5绫筹紝璁板綍鏂扮殑鐐癸紙鍑忓皯璺緞鐐规暟閲忥級
+				if (distance > 5) {
+					walkingLocations.value.push({
+						latitude: newLocation.latitude,
+						longitude: newLocation.longitude
+					});
+					
+					// 鏇存柊璺緞
+					walkingPath.value = [{
+						points: walkingLocations.value.map(loc => ({
+							latitude: loc.latitude,
+							longitude: loc.longitude
+						})),
+						color: '#007AFF',
+						width: 4
+					}];
+					
+					// 鏇存柊鎬昏窛绂?					walkingDistance.value += distance;
+				}
+			}
+		}
+		
+		// 鐩戝惉鍦扮悊浣嶇疆鍙樺寲
+		function startLocationWatch() {
+			// 鍏堣幏鍙栦竴娆″綋鍓嶄綅缃?			uni.getLocation({
+				type: 'gcj02',
+				success: (res) => {
+					updateLocation({
+						latitude: res.latitude,
+						longitude: res.longitude
+					});
+					
+					// 绗竴娆¤幏鍙栦綅缃垚鍔熷悗锛屽鏋滄湭鍐冲畾鏄惁鍏变韩浣嶇疆锛屾樉绀烘彁绀?					if (!userStore.hasDecidedLocationSharing) {
+						showLocationSharingTip.value = true;
+					}
+					
+					// 鍒濆鍖栭珮寰峰湴鍥惧畾浣嶅璞★紝鑾峰彇鏇翠赴瀵岀殑瀹氫綅淇℃伅
+					if (window.AMap) {
+						try {
+							const AMap = window.AMap;
+							// 浣跨敤楂樺痉鍦板浘鐨勫畾浣嶅姛鑳?							AMap.plugin(['AMap.Geolocation'], function() {
+								const geolocation = new AMap.Geolocation({
+									enableHighAccuracy: true, // 楂樼簿搴︽ā寮?									timeout: 10000, // 瓒呮椂鏃堕棿
+									convert: true, // 鑷姩鍋忕Щ鍧愭爣
+									showButton: false, // 涓嶆樉绀烘寜閽?									showMarker: false, // 涓嶆樉绀哄畾浣嶇偣
+									showCircle: false, // 涓嶆樉绀虹簿搴﹀湀
+								});
+								
+								// 鐩戝惉瀹氫綅鍙樺寲
+								geolocation.getCurrentPosition(function(status, result) {
+									if (status === 'complete') {
+										// 楂樺痉鍦板浘杩斿洖鐨勬柟鍚戜俊鎭?										console.log('楂樺痉瀹氫綅缁撴灉:', result);
+										if (result.heading !== undefined && result.heading !== null) {
+											userHeading.value = result.heading;
+											console.log('楂樺痉鍦板浘鏂瑰悜:', result.heading);
+										}
+										
+										// 鏇存柊浣嶇疆
+										if (result.position) {
+											currentLocation.value = {
+												latitude: result.position.lat,
+												longitude: result.position.lng
+											};
+										}
+									} else {
+										console.log('楂樺痉鍦板浘瀹氫綅澶辫触', result);
+									}
+								});
+								
+								// 鐩戝惉鏂瑰悜鍙樺寲锛堝鏋滆澶囨敮鎸侊級
+								if (navigator.geolocation && navigator.geolocation.watchPosition) {
+									navigator.geolocation.watchPosition(
+										function(pos) {
+											if (pos.coords.heading !== null && pos.coords.heading !== undefined) {
+												userHeading.value = pos.coords.heading;
+												console.log('璁惧鏂瑰悜:', pos.coords.heading);
+											}
+										},
+										function(err) {
+											console.log('鑾峰彇璁惧鏂瑰悜澶辫触:', err);
+										},
+										{
+											enableHighAccuracy: true,
+											maximumAge: 0
+										}
+									);
+								}
+							});
+						} catch (error) {
+							console.error('楂樺痉鍦板浘鍒濆鍖栧け璐?', error);
+						}
+					}
+					
+					// 鍚姩璁惧鏂瑰悜鐩戝惉
+					if (typeof uni.onDeviceMotionChange === 'function') {
+						uni.startDeviceMotionListening({
+							interval: 'game',
+							success: () => {
+								console.log('璁惧鏂瑰悜鐩戝惉鍚姩鎴愬姛');
+							},
+							fail: (err) => {
+								console.error('璁惧鏂瑰悜鐩戝惉鍚姩澶辫触', err);
+							}
+						});
+						
+						uni.onDeviceMotionChange((res) => {
+							// alpha瀵瑰簲璁惧缁晍杞寸殑鏃嬭浆瑙掑害锛屽湪鍦板浘涓婄浉褰撲簬鏈濆悜
+							if (res.alpha !== undefined) {
+								userHeading.value = res.alpha;
+								console.log('璁惧鏂瑰悜鏇存柊:', res.alpha);
+							}
+						});
+					}
+				},
+				fail: (err) => {
+					console.error('鑾峰彇浣嶇疆澶辫触', err);
+					uni.showToast({
+						title: '鑾峰彇浣嶇疆淇℃伅澶辫触锛岃妫€鏌ュ畾浣嶆潈闄?,
+						icon: 'none'
+					});
+				}
+			});
+			
+			// 鎸佺画鐩戝惉浣嶇疆鍙樺寲
+			locationUpdateInterval.value = setInterval(() => {
+				uni.getLocation({
+					type: 'gcj02',
+					success: (res) => {
+						// 鑾峰彇鏂瑰悜淇℃伅锛堝鏋滆澶囨敮鎸侊級
+						if (typeof uni.onCompassChange === 'function') {
+							uni.onCompassChange((compass) => {
+								// compass.direction 0-360搴︼紝姝ｅ寳涓?
+								updateLocation({
+									latitude: res.latitude,
+									longitude: res.longitude
+								}, compass.direction);
+							});
+						} else {
+							updateLocation({
+								latitude: res.latitude,
+								longitude: res.longitude
+							});
+						}
+						
+						// 濡傛灉鍏佽浣嶇疆鍏变韩锛屾洿鏂版湇鍔″櫒
+						if (isLocationShared.value) {
+							startLocationSharing();
+						}
+					}
+				});
+			}, 10000); // 姣?0绉掓洿鏂颁竴娆′綅缃?			
+			// 鑾峰彇闄勮繎鐢ㄦ埛浣嶇疆
+			nearbyUsersUpdateInterval.value = setInterval(() => {
+				getNearbyUsers();
+			}, 30000); // 姣?0绉掓洿鏂颁竴娆￠檮杩戠敤鎴?		}
+		
+		// 鍒涘缓榛樿鏍囪 - 绉诲埌涓婃柟锛岀‘淇濆湪璋冪敤鍓嶅凡瀹氫箟
+		function createDefaultMarker(position, userId) {
+			console.log('鍒涘缓榛樿鏍囪锛岀敤鎴稩D:', userId);
+			
+			// 濡傛灉鏈彁渚沺osition鎴杣serId锛屼娇鐢ㄩ粯璁ゅ€?			if (!position && currentLocation.value) {
+				position = [currentLocation.value.longitude, currentLocation.value.latitude];
+			}
+			
+			// 濡傛灉杩瀋urrentLocation涔熸病鏈夛紝鍒欎娇鐢ㄩ粯璁や綅缃?			if (!position) {
+				console.warn('createDefaultMarker: 鏃犳硶鑾峰彇浣嶇疆淇℃伅锛屼娇鐢ㄩ粯璁や綅缃?);
+				position = [116.3, 39.9]; // 榛樿鍖椾含澶╁畨闂ㄤ綅缃?			}
+			
+			// 濡傛灉鏈彁渚泆serId锛屽皾璇曚粠userStore鑾峰彇
+			if (!userId && userStore.userInfo) {
+				userId = userStore.userInfo.id;
+				console.log('浠庣敤鎴峰瓨鍌ㄨ幏鍙朓D:', userId);
+			}
+			
+			// 濡傛灉userId浠嶇劧涓虹┖锛屼娇鐢ㄦ爣鍑嗗寲鏍囪瘑绗?			if (!userId) {
+				userId = 'current-user-marker';
+				console.warn('userId鏈彁渚涗笖鏃犳硶鑾峰彇锛屼娇鐢ㄥ浐瀹氭爣璇嗙:', userId);
+			}
+			
+			// 纭繚map瀵硅薄宸插垵濮嬪寲
+			if (!map.value) {
+				console.error('createDefaultMarker: 鍦板浘瀵硅薄鏈垵濮嬪寲锛屾棤娉曞垱寤烘爣璁?);
+				return null;
+			}
+			
+			// 鍒涘缓闂寘锛屼繚瀛樺綋鍓嶄笂涓嬫枃涓殑鍙橀噺
+			const mapRef = map;
+			const positionRef = position;
+			const userIdRef = userId;
+			
+			// 鍦ㄥ垱寤烘柊鏍囪鍓嶏紝绉婚櫎鍙兘瀛樺湪鐨勫悓ID鏍囪
+			if (userMarkers[userIdRef]) {
+				console.log('绉婚櫎宸插瓨鍦ㄧ殑鍚孖D鏍囪:', userIdRef);
+				mapRef.value.remove(userMarkers[userIdRef]);
+				delete userMarkers[userIdRef];
+			}
+			
+			try {
+				console.log('浣跨敤ID鍒涘缓榛樿鏍囪:', userIdRef);
+				const marker = new AMap.Marker({
+					map: mapRef.value,
+					position: positionRef,
+					icon: new AMap.Icon({
+						size: new AMap.Size(30, 30),
+						image: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`
+							<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+								<circle cx="15" cy="15" r="14" fill="#007aff" stroke="white" stroke-width="2"/>
+							</svg>
+						`),
+						imageSize: new AMap.Size(30, 30)
+					}),
+					offset: new AMap.Pixel(-15, -15),
+					zIndex: 100,
+					extData: { userId: userIdRef, type: 'default-user' }
+				});
+				
+				// 灏嗘爣璁颁繚瀛樺埌鍏ㄥ眬瀵硅薄
+				userMarkers[userIdRef] = marker;
+				
+				// 璁剧疆鏍囪DOM鍏冪礌鐨勫睘鎬?				setTimeout(() => {
+					try {
+						const dom = marker.getContentDom();
+						if (dom) {
+							console.log('璁剧疆榛樿鏍囪DOM灞炴€э紝鐢ㄦ埛ID:', userIdRef);
+							
+							dom.setAttribute('data-user-id', userIdRef);
+							dom.setAttribute('data-id', `user-marker-${userIdRef}`);
+							dom.id = `marker-${userIdRef}`;
+							dom.classList.add('user-marker');
+							dom.classList.add(`user-marker-${userIdRef}`);
+							dom.setAttribute('data-marker-type', 'default-user');
+							dom.setAttribute('data-timestamp', new Date().getTime());
+							
+							// 娣诲姞鐐瑰嚮浜嬩欢澶勭悊
+							dom.addEventListener('click', (e) => {
+								e.stopPropagation();
+								console.log('榛樿鏍囪DOM鐐瑰嚮, 鐢ㄦ埛ID:', userIdRef);
+								onMarkerTap({detail: {markerId: userIdRef}});
+							});
+							
+							// 纭繚鍙偣鍑绘€?							dom.style.cursor = 'pointer';
+							dom.style.pointerEvents = 'auto';
+						} else {
+							console.warn('鏃犳硶鑾峰彇榛樿鏍囪DOM');
+						}
+					} catch (e) {
+						console.error('璁剧疆榛樿鏍囪DOM灞炴€ф椂鍑洪敊:', e);
+					}
+				}, 100);
+				
+				// 娣诲姞鍒板叏灞€鏍囪鍒楄〃
+				if (allMarkers.value) {
+					allMarkers.value.push(marker);
+				}
+				
+				return marker;
+			} catch (e) {
+				console.error('鍒涘缓榛樿鏍囪鏃跺嚭閿?', e);
+				return null;
+			}
+		}
+
+		// 鍒涘缓鐢ㄦ埛鏍囪锛堜娇鐢ㄥ浘鐗囷級
+		const createUserMarkerWithImage = (userId, position, imageUrl) => {
+			// 纭繚map.value宸插垵濮嬪寲
+			if (!map.value) {
+				console.error('鍦板浘鏈垵濮嬪寲锛屾棤娉曞垱寤烘爣璁?);
+				// 灏濊瘯寤惰繜鍒涘缓鏍囪
+				setTimeout(() => {
+					if (map.value) {
+						console.log('鍦板浘鐜板湪宸插垵濮嬪寲锛岄噸璇曞垱寤烘爣璁?);
+						createUserMarkerWithImage(userId, position, imageUrl);
+					} else {
+						console.error('閲嶈瘯鍚庡湴鍥句粛鏈垵濮嬪寲锛屾爣璁板垱寤哄け璐?);
+					}
+				}, 2000);
+				return;
+			}
+			
+			// 纭繚userId涓嶄负绌猴紝濡傛灉涓虹┖鍒欎娇鐢ㄤ竴涓槑纭殑鏍囪瘑绗?			if (!userId) {
+				console.warn('鏍囪鐨剈serId涓虹┖锛屼娇鐢ㄥ浐瀹氭爣璇嗙');
+				userId = 'current-user-location';
+			}
+			
+			try {
+				console.log('寮€濮嬪垱寤虹敤鎴锋爣璁帮紝鐢ㄦ埛ID:', userId);
+				
+				// 鐢诲竷澶у皬鍜屽浘鍍忓ぇ灏?				const canvasSize = 60;
+				const imageSize = 56; // 鐣ュ井澧炲ぇ鍥惧儚灏哄锛屽噺灏戠櫧杈?				
+				// 鍒涘缓鐢诲竷
+				const canvas = document.createElement('canvas');
+				canvas.width = canvasSize;
+				canvas.height = canvasSize;
+				// 娣诲姞willReadFrequently灞炴€т互浼樺寲鎬ц兘
+				const ctx = canvas.getContext('2d', { willReadFrequently: true });
+				
+				if (!ctx) {
+					console.error('鏃犳硶鑾峰彇canvas涓婁笅鏂?);
+					return createDefaultMarker(position, userId);
+				}
+				
+				// 娓呯┖鐢诲竷
+				ctx.clearRect(0, 0, canvasSize, canvasSize);
+				
+				// 鍒涘缓鍥惧儚瀵硅薄
+				const img = new Image();
+				img.crossOrigin = 'Anonymous'; // 灏濊瘯澶勭悊璺ㄥ煙闂
+				
+				// 鍥惧儚鍔犺浇瀹屾垚鍚庣粯鍒?				img.onload = function() {
+					try {
+						// 鍒涘缓鍦嗗舰瑁佸壀鍖哄煙
+						ctx.save();
+						ctx.beginPath();
+						ctx.arc(canvasSize/2, canvasSize/2, imageSize/2, 0, Math.PI * 2);
+						ctx.closePath();
+						ctx.clip();
+						
+						// 璁＄畻缁樺埗鍧愭爣浠ュ眳涓樉绀哄浘鍍?						const x = (canvasSize - imageSize) / 2;
+						const y = (canvasSize - imageSize) / 2;
+						
+						// 鍦ㄥ渾褰㈣鍓尯鍩熷唴缁樺埗鍥惧儚
+						ctx.drawImage(img, x, y, imageSize, imageSize);
+						
+						// 鎭㈠涓婁笅鏂?						ctx.restore();
+						
+						// 鐢昏摑鑹茶竟妗?						ctx.beginPath();
+						ctx.arc(canvasSize/2, canvasSize/2, imageSize/2, 0, Math.PI * 2);
+						ctx.lineWidth = 2;
+						ctx.strokeStyle = '#2196F3'; // 钃濊壊杈规
+						ctx.stroke();
+						
+						// 灏嗙敾甯冭浆鎹负base64鍥惧儚
+						const markerImage = canvas.toDataURL('image/png');
+						
+						// 纭繚userMarkers瀵硅薄宸插垵濮嬪寲
+						if (typeof userMarkers !== 'object') {
+							console.warn('userMarkers鏈畾涔夛紝鍒濆鍖栦负绌哄璞?);
+							window.userMarkers = {};
+						}
+						
+						// 鍒涘缓鏍囪
+						const marker = new AMap.Marker({
+							position: position,
+							icon: new AMap.Icon({
+								size: new AMap.Size(canvasSize, canvasSize),
+								image: markerImage,
+								imageSize: new AMap.Size(canvasSize, canvasSize)
+							}),
+							offset: new AMap.Pixel(-canvasSize/2, -canvasSize/2),
+							zIndex: 100,
+							extData: { userId: userId, type: 'user' }
+						});
+						
+						// 灏嗘爣璁版坊鍔犲埌鍦板浘
+						map.value.add(marker);
+						
+						// 淇濆瓨鏍囪寮曠敤浠ヤ究鍚庣画鎿嶄綔
+						userMarkers[userId] = marker;
+						
+						// 璁剧疆DOM灞炴€у拰浜嬩欢澶勭悊
+						setTimeout(() => {
+							try {
+								const dom = marker.getContentDom();
+								if (dom) {
+									console.log(`涓烘爣璁癉OM璁剧疆鐢ㄦ埛ID: ${userId}`);
+									
+									// 璁剧疆鏁版嵁灞炴€х敤浜庝簨浠跺鐞?- 纭繚璁剧疆姝ｇ‘鐨処D
+									dom.setAttribute('data-user-id', userId);
+									dom.setAttribute('data-id', `user-marker-${userId}`);
+									dom.id = `marker-${userId}`;
+									dom.classList.add('user-marker');
+									dom.classList.add(`user-marker-${userId}`);
+									
+									// 璁剧疆鑷畾涔夊睘鎬э紝鏂逛究璋冭瘯
+									dom.setAttribute('data-marker-type', 'user');
+									dom.setAttribute('data-timestamp', new Date().getTime());
+									
+									// 娣诲姞鐐瑰嚮浜嬩欢
+									dom.addEventListener('click', (e) => {
+										e.stopPropagation();
+										console.log('鐢ㄦ埛鏍囪DOM鐐瑰嚮, 鐢ㄦ埛ID:', userId);
+										processUserMarkerTap(userId);
+									});
+									
+									// 纭繚鍙偣鍑绘€?									dom.style.cursor = 'pointer';
+									dom.style.pointerEvents = 'auto';
+									
+									// 纭繚鍥惧儚鍏冪礌涔熸湁姝ｇ‘鐨処D
+									const imgElem = dom.querySelector('img');
+									if (imgElem) {
+										imgElem.setAttribute('data-user-id', userId);
+										imgElem.setAttribute('data-id', `user-image-${userId}`);
+									}
+								} else {
+									console.warn('鏃犳硶鑾峰彇鏍囪DOM鍏冪礌');
+								}
+							} catch (e) {
+								console.error('璁剧疆鏍囪DOM灞炴€ф椂鍑洪敊:', e);
+							}
+						}, 100);
+						
+						// 涓烘爣璁版坊鍔犵偣鍑讳簨浠?						marker.on('click', function(e) {
+							console.log('鏍囪琚偣鍑伙紝鐢ㄦ埛ID:', userId);
+							processUserMarkerTap(userId);
+						});
+						
+						// 纭繚鍏冪礌宸叉坊鍔犲悗璁剧疆瑙﹀彂鍣?						setTimeout(() => setupMarkerClickHandlers(), 500);
+						
+						console.log('鎴愬姛鍒涘缓鐢ㄦ埛鏍囪锛岀敤鎴稩D:', userId);
+						return marker;
+					} catch (innerError) {
+						console.error('缁樺埗鏍囪鍥惧儚鏃跺嚭閿?', innerError);
+						return createDefaultMarker(position, userId);
+					}
+				};
+				
+				// 鍥惧儚鍔犺浇澶辫触鏃跺垱寤洪粯璁ゆ爣璁?				img.onerror = function(e) {
+					console.error('鍔犺浇澶村儚鍥惧儚澶辫触:', e);
+					return createDefaultMarker(position, userId);
+				};
+				
+				// 璁剧疆鍥惧儚婧?				img.src = imageUrl;
+			} catch (error) {
+				console.error('鍒涘缓鐢ㄦ埛鏍囪鍑洪敊:', error);
+				return createDefaultMarker(position, userId);
+			}
+		}
+
+		// 寮哄埗鍒濆鍖栫敤鎴疯璇佺姸鎬?		const initUserAuth = async () => {
+		  // 濡傛灉宸茬粡鏈塼oken浣嗘病鏈夌敤鎴蜂俊鎭紝灏濊瘯鑾峰彇
+		  if (userStore.token && !userStore.user) {
+			try {
+			  console.log('鍙戠幇token浣嗘病鏈夌敤鎴锋暟鎹紝灏濊瘯鑾峰彇鐢ㄦ埛淇℃伅');
+			  await userStore.fetchUserInfo();
+			  console.log('鎴愬姛鑾峰彇鐢ㄦ埛鏁版嵁:', userStore.user);
+			} catch (err) {
+			  console.error('鑾峰彇鐢ㄦ埛淇℃伅澶辫触锛屽彲鑳介渶瑕侀噸鏂扮櫥褰?', err);
+			}
+		  }
+		  
+		  // 妫€鏌ヨ璇佺姸鎬?		  if (userStore.token) {
+			console.log('宸叉湁token锛屽亣瀹氱敤鎴峰凡鐧诲綍 - isAuthenticated:', userStore.isAuthenticated);
+			
+			// 濡傛灉isAuthenticated涓篺alse浣嗘湁token锛屽彲鑳芥槸user瀵硅薄缂哄け
+			// 鎴戜滑涓嶈兘鐩存帴淇敼isAuthenticated锛屼絾鍙互纭繚user瀵硅薄瀛樺湪
+			if (!userStore.isAuthenticated && !userStore.user) {
+			  // 灏濊瘯浠巐ocalStorage鑾峰彇鐢ㄦ埛淇℃伅
+			  try {
+				const storedUserInfo = uni.getStorageSync('userInfo');
+				if (storedUserInfo) {
+				  const userInfo = JSON.parse(storedUserInfo);
+				  // 纭繚userStore.user鏈夊€?				  userStore.$patch({ user: userInfo });
+				  console.log('浠庢湰鍦板瓨鍌ㄦ仮澶嶇敤鎴蜂俊鎭?', userInfo);
+				} else {
+				  console.log('鏈湴瀛樺偍涓病鏈夌敤鎴蜂俊鎭?);
+				}
+			  } catch (e) {
+				console.error('浠庢湰鍦板瓨鍌ㄦ仮澶嶇敤鎴蜂俊鎭け璐?', e);
+			  }
+			}
+		  }
+				
+		  // 璁板綍褰撳墠璁よ瘉鐘舵€?		  console.log('褰撳墠璁よ瘉鐘舵€?', {
+			token瀛樺湪: !!userStore.token,
+			user瀛樺湪: !!userStore.user,
+			isAuthenticated: userStore.isAuthenticated
+		  });
+		};
+
+		// 鏇挎崲toggleMarker鍑芥暟锛岄伩鍏岰ORS閿欒
+		function toggleMarker() {
+		  try {
+			// 纭繚鏈変綅缃俊鎭?			if (!currentLocation.value || typeof currentLocation.value.latitude === 'undefined') {
+			  console.error('褰撳墠浣嶇疆淇℃伅涓嶅彲鐢紝鏃犳硶娣诲姞鏍囪');
+			  uni.showToast({
+				title: '鏃犳硶鑾峰彇浣嶇疆淇℃伅',
+				icon: 'none'
+			  });
+			  return;
+			}
+			
+			// 鑾峰彇鐢ㄦ埛ID - 浠巗tore涓幏鍙栨垨浣跨敤鍥哄畾鏍囪瘑绗?			let userId = userStore.userInfo?.id || userStore.user?._id || 'current-user-location';
+			console.log('浣跨敤鐢ㄦ埛ID鍒涘缓鏍囪:', userId);
+			
+			// 濡傛灉宸茬粡瀛樺湪姝D鐨勬爣璁帮紝鍏堢Щ闄ゅ畠浠ラ伩鍏嶉噸澶?			if (map.value) {
+			  // 妫€鏌ユ槸鍚﹀凡瀛樺湪鐢ㄦ埛鏍囪
+			  const existingMarkers = map.value.getAllOverlays('marker');
+			  let hasUserMarker = false;
+			  
+			  existingMarkers.forEach(marker => {
+				try {
+				  const markerUserId = marker?.getExtData?.()?.userId;
+				  // 濡傛灉鎵惧埌浜嗙浉鍚孖D鎴栨槸current-user-location鏍囪
+				  if (markerUserId === userId || markerUserId === 'current-user-location') {
+					console.log(`鍙戠幇宸插瓨鍦ㄦ爣璁?${markerUserId})锛岀Щ闄や互閬垮厤閲嶅`);
+					map.value.remove(marker);
+					hasUserMarker = true;
+				  }
+				} catch (err) {
+				  console.warn('妫€鏌ユ爣璁版椂鍑洪敊:', err);
+				}
+			  });
+			  
+			  if (hasUserMarker) {
+				console.log('宸茬Щ闄ゆ棫鏍囪锛屽垱寤烘柊鏍囪');
+			  }
+			}
+			
+			const position = [currentLocation.value.longitude, currentLocation.value.latitude];
+			
+			// 浣跨敤鐢ㄦ埛澶村儚鎴栭粯璁ゅご鍍?			const avatarUrl = userAvatar.value;
+			console.log('鍒涘缓鐢ㄦ埛鏍囪锛屼娇鐢ㄥご鍍廢RL:', avatarUrl);
+
+			// 鍙垱寤轰竴涓爣璁帮紝浼樺厛浣跨敤鐢ㄦ埛ID鑰岄潪閫氱敤ID
+			createUserMarkerWithImage(userId, position, avatarUrl);
+			
+			// 娓呴櫎鏃х殑浣嶇疆鏍囪寮曠敤
+			if (userMarkers['current-user-location'] && userId !== 'current-user-location') {
+			  delete userMarkers['current-user-location'];
+			}
+			
+			console.log('宸插畬鎴愬垱寤虹敤鎴锋爣璁?);
+		  } catch (error) {
+			console.error('鍒涘缓鏍囪鏃跺嚭閿?', error);
+			uni.showToast({
+			  title: '鍒涘缓浣嶇疆鏍囪澶辫触',
+			  icon: 'none'
+			});
+		  }
+		}
+
+		// 杈呭姪鍑芥暟锛氭牴鎹甀D鏌ユ壘鐢ㄦ埛
+		function findUserById(userId) {
+			if (!nearbyUsers.value || !nearbyUsers.value.length) return null;
+			
+			// 灏濊瘯涓嶅悓鐨勬柟寮忓尮閰嶇敤鎴稩D
+			const user = nearbyUsers.value.find(u => {
+				if (!u || !u.id) return false;
+				
+				// 鐩存帴姣旇緝ID
+				if (String(u.id) === String(userId)) return true;
+				
+				// 姣旇緝ID鍓嶇紑褰㈠紡
+				if (String(u.id) === String(userId).replace(/^user-/, '')) return true;
+				
+				// 姣旇緝ID鍚庣紑褰㈠紡
+				if (String(u.id) === String(userId).replace(/-.*$/, '')) return true;
+				
+				return false;
+			});
+			
+			return user;
+		}
+
+		// 缁勪欢鎸傝浇鏃?		onMounted(async () => {
+			console.log('缁勪欢鎸傝浇寮€濮?..');
+			
+			// 娓呯悊鍙兘瀛樺湪鐨勫浣欐爣璁?			setTimeout(() => {
+				cleanupExtraMarkers();
+			}, 1000);
+			
+			// 鍦ㄧ粍浠舵寕杞藉悗鍚姩瀹氭湡妫€鏌ユ爣璁?			markerScanInterval = setInterval(() => {
+				setupMarkerClickHandlers();
+				
+				// 姣?0绉掓墽琛屼竴娆℃爣璁版竻鐞?				if (new Date().getSeconds() % 10 === 0) {
+					cleanupExtraMarkers();
+				}
+			}, 2000); // 姣?绉掓鏌ヤ竴娆?			
+			// 纭繚鑾峰彇鐢ㄦ埛瀹犵墿鏁版嵁
+			if (userStore.isAuthenticated) {
+				// 鍔犺浇瀹犵墿鏁版嵁
+				console.log('鍔犺浇鐢ㄦ埛瀹犵墿鏁版嵁');
+				petStore.fetchPets().then(pets => {
+					console.log('鎴愬姛鑾峰彇瀹犵墿鏁版嵁:', pets);
+					// 鏇存柊myPets鍙橀噺浠ヤ緵鍏朵粬缁勪欢浣跨敤
+					myPets.value = pets;
+				}).catch(err => {
+					console.error('鑾峰彇瀹犵墿鏁版嵁澶辫触:', err);
+				});
+			}
+			
+			// 棣栧厛鍒濆鍖栫敤鎴疯璇佺姸鎬?			await initUserAuth();
+			
+			// 鑾峰彇鍦板浘涓婁笅鏂?			const mapContext = uni.createMapContext('map');
+			
+			// 鏄剧ず鐢ㄦ埛澶村儚璋冭瘯淇℃伅
+			console.log('鍒濆鐢ㄦ埛淇℃伅:', userStore.userInfo || userStore.user);
+			console.log('鍒濆澶村儚璺緞:', (userStore.userInfo || userStore.user)?.avatar);
+			console.log('鐢ㄦ埛璁よ瘉鐘舵€?', userStore.isAuthenticated);
+			
+			// 濡傛灉鐢ㄦ埛淇℃伅涓嶅畬鏁达紝鍏堝皾璇曡幏鍙?			if (!userStore.user && !userStore.userInfo) {
+				console.log('鐢ㄦ埛淇℃伅涓嶅畬鏁达紝灏濊瘯閲嶆柊鑾峰彇...');
+				try {
+					await userStore.fetchUserInfo();
+					console.log('宸查噸鏂拌幏鍙栫敤鎴蜂俊鎭?', userStore.user);
+				} catch (err) {
+					console.error('鑾峰彇鐢ㄦ埛淇℃伅澶辫触:', err);
+				}
+			}
+			
+			// 寮€濮嬬洃鍚綅缃?			startLocationWatch();
+			
+			// 鑾峰彇闄勮繎鐢ㄦ埛
+			getNearbyUsers();
+			
+			// 鑾峰彇鎴戠殑瀹犵墿
+			fetchMyPets();
+			
+			// 绛夊緟DOM娓叉煋瀹屾垚
+			await nextTick();
+			
+			// 鍒濆鍖栭珮寰峰湴鍥?			const initAMap = () => {
+				setTimeout(() => {
+					const mapContainer = document.getElementById('map-container');
+					if (!mapContainer) {
+						console.error('鍦板浘瀹瑰櫒鍏冪礌鏈壘鍒?');
+						return;
+					}
+					
+					console.log('鍦板浘瀹瑰櫒宸插姞杞斤紝鍒濆鍖栭珮寰峰湴鍥?);
+					
+					try {
+						// 妫€鏌Map鏄惁宸插姞杞?						if (typeof window.AMap === 'undefined') {
+							console.log('AMap鏈畾涔夛紝鍔ㄦ€佸姞杞借剼鏈?);
+							
+							// 鍔ㄦ€佸姞杞介珮寰峰湴鍥捐剼鏈?							const script = document.createElement('script');
+							// 浣跨敤鐜鍙橀噺涓殑楂樺痉鍦板浘API瀵嗛挜鎴栬缃竴涓粯璁ょ殑寮€鍙戝瘑閽?							const amapKey = import.meta.env.VITE_AMAP_KEY || '36b5c28cb6ddb8426b802b4d88068afa';
+							script.src = `https://webapi.amap.com/maps?v=2.0&key=${amapKey}`;
+							script.async = true;
+							
+							script.onload = () => {
+								console.log('楂樺痉鍦板浘鑴氭湰宸插姞杞?);
+								// 妫€鏌Map鏄惁鎴愬姛鍔犺浇
+								if (typeof window.AMap !== 'undefined') {
+									console.log('AMap鍔犺浇鎴愬姛锛岀増鏈?', window.AMap.version);
+									// 鍒濆鍖栧湴鍥?									initMap();
+								} else {
+									console.error('鑴氭湰鍔犺浇瀹屾垚锛屼絾AMap瀵硅薄浠嶇劧鏈畾涔?);
+									uni.showToast({
+										title: '鍦板浘鍒濆鍖栧け璐?,
+										icon: 'none'
+									});
+								}
+							};
+							
+							script.onerror = (error) => {
+								console.error('鍔犺浇楂樺痉鍦板浘鑴氭湰澶辫触:', error);
+								uni.showToast({
+									title: '鍦板浘鏈嶅姟鍔犺浇澶辫触',
+									icon: 'none'
+								});
+							};
+							
+							document.head.appendChild(script);
+						} else {
+							// AMap宸插瓨鍦紝鐩存帴鍒濆鍖栧湴鍥?							console.log('AMap宸插姞杞斤紝鐩存帴鍒濆鍖栧湴鍥?);
+							initMap();
+						}
+					} catch (e) {
+						console.error('鍒濆鍖栭珮寰峰湴鍥捐繃绋嬩腑鍑洪敊:', e);
+					}
+				}, 1000);
+			};
+			
+			// 娣诲姞鍒濆鍖栧湴鍥剧殑鍑芥暟
+			const initMap = () => {
+				try {
+					// 妫€鏌Map鏄惁鍙敤
+					if (typeof window.AMap === 'undefined') {
+						console.error('AMap瀵硅薄浠嶇劧鏈畾涔夛紝鏃犳硶鍒濆鍖栧湴鍥?);
+						uni.showToast({
+							title: '鍦板浘鍔犺浇澶辫触锛岃鍒锋柊椤甸潰',
+							icon: 'none',
+							duration: 3000
+						});
+						return;
+					}
+					
+					console.log('鍑嗗鍒濆鍖栧湴鍥撅紝AMap鐗堟湰:', window.AMap.version);
+					
+					if (!map.value) {
+						// 鍒濆鍖栧湴鍥惧璞?						const mapOptions = {
+							zoom: 15,
+							center: [currentLocation.value.longitude, currentLocation.value.latitude],
+							resizeEnable: true
+						};
+						
+						console.log('鍦板浘鍒濆鍖栧弬鏁?', mapOptions);
+						
+						// 纭繚DOM鍏冪礌瀛樺湪
+						const mapContainer = document.getElementById('map-container');
+						if (!mapContainer) {
+							console.error('鎵句笉鍒板湴鍥惧鍣ㄥ厓绱?#map-container)');
+							return;
+						}
+						
+						try {
+							map.value = new window.AMap.Map('map-container', mapOptions);
+							// 淇濆瓨鍒板叏灞€瀵硅薄浠ヤ究鍦ㄥ叾浠栧嚱鏁颁腑璁块棶
+							if (typeof window !== 'undefined') {
+								window.__dogRunMapInstance = map.value;
+							}
+							console.log('楂樺痉鍦板浘鍒濆鍖栧畬鎴?);
+						} catch (mapError) {
+							console.error('鍒涘缓鍦板浘瀹炰緥鏃跺彂鐢熼敊璇?', mapError);
+							uni.showToast({
+								title: '鍒涘缓鍦板浘澶辫触: ' + mapError.message,
+								icon: 'none',
+								duration: 3000
+							});
+							return;
+						}
+								
+						// 鍦板浘鍔犺浇瀹屾垚鍚庡啀鍒涘缓鐢ㄦ埛鏍囪
+						map.value.on('complete', () => {
+							console.log('鍦板浘鍔犺浇瀹屾垚锛屽垱寤虹敤鎴锋爣璁?);
+							
+							// 灏嗗湴鍥惧疄渚嬪瓨鍌ㄥ湪DOM鍏冪礌涓?							if (mapContainer) {
+								mapContainer.__amap_instance__ = map.value;
+							}
+							
+							// 绠€鍖栧湴鍥炬爣璁板垱寤烘潯浠讹紝鍙渶瑕佷綅缃俊鎭?							setTimeout(() => {
+								if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+									console.log('寮€濮嬪垱寤哄垵濮嬬敤鎴锋爣璁?);
+									// 浣跨敤toggleMarker鍒涘缓鐢ㄦ埛鏍囪
+									toggleMarker();
+									console.log('鍒濆鐢ㄦ埛鏍囪宸插垱寤?);
+								} else {
+									console.warn('鏃犳硶鍒涘缓鐢ㄦ埛鏍囪锛氫綅缃笉鍙敤');
+								}
+							}, 1000);
+						});
+
+						// 娣诲姞鐐瑰嚮浜嬩欢
+						map.value.on('click', (e) => {
+							console.log('楂樺痉鍦板浘鐐瑰嚮浜嬩欢:', e);
+							
+							// 妯℃嫙鏍囧噯鐐瑰嚮浜嬩欢鏍煎紡
+							onMapTap({
+								detail: {
+									x: e.pixel.x,
+									y: e.pixel.y
+								}
+							});
+						});
+								
+						// 璁剧疆鏍囪鐐瑰嚮澶勭悊鍣?						setTimeout(setupMarkerClickHandlers, 2000);
+					} else {
+						console.log('鍦板浘宸茬粡鍒濆鍖栵紝涓嶉渶瑕侀噸澶嶅垱寤?);
+					}
+				} catch (e) {
+					console.error('鍒涘缓鍦板浘瀹炰緥澶辫触:', e);
+					// 鏄剧ず閿欒鎻愮ず
+					uni.showToast({
+						title: '鍦板浘鍒濆鍖栧け璐ワ紝璇烽噸璇?,
+						icon: 'none',
+						duration: 3000
+					});
+				}
+			};
+			
+			// 鎵ц鍒濆鍖?			initAMap();
+			
+			console.log('缁勪欢鎸傝浇瀹屾垚');
+		});
+		
+		// 棰勫姞杞藉浘鐗?		const preloadImage = (src, callback) => {
+			if (!src) {
+				console.warn('preloadImage: 鏃犳晥鐨勫浘鐗囨簮');
+				if (callback) callback(defaultAvatarBase64);
+				return;
+			}
+			
+			console.log('棰勫姞杞藉浘鐗?', src);
+			const img = new Image();
+			const maxRetries = 3;
+			let retryCount = 0;
+			
+			img.onload = () => {
+				console.log('鍥剧墖鍔犺浇鎴愬姛:', src);
+				if (callback) callback(src);
+			};
+			
+			img.onerror = () => {
+				console.error('鍥剧墖鍔犺浇澶辫触:', src);
+				
+				// 濡傛灉鏄浉瀵硅矾寰?/uploads/锛屽皾璇曚笉鍚岀殑鍩虹URL
+				if (src.startsWith('/uploads/') && retryCount < maxRetries) {
+					retryCount++;
+					console.log(`灏濊瘯閲嶆柊鍔犺浇 (${retryCount}/${maxRetries})...`);
+					
+					// 灏濊瘯涓嶅悓鐨勫熀纭€URL
+					let newSrc = src;
+					if (retryCount === 1) {
+						newSrc = 'http://localhost:5000' + src;
+					} else if (retryCount === 2) {
+						newSrc = 'http://localhost:3000' + src;
+					} else if (retryCount === 3) {
+						newSrc = window.location.origin + src;
+					}
+					
+					console.log('灏濊瘯鏂癠RL:', newSrc);
+					img.src = newSrc;
+					return;
+				}
+				
+				// 鎵€鏈夐噸璇曞け璐ワ紝浣跨敤榛樿澶村儚
+				console.warn('鎵€鏈夐噸璇曞け璐ワ紝浣跨敤榛樿澶村儚');
+				if (callback) callback(defaultAvatarBase64);
+			};
+			
+			img.src = src;
+		};
+		
+		// 缁勪欢鍗歌浇鍓?		onBeforeUnmount(() => {
+			// 娓呯悊瀹氭椂鍣?			if (locationUpdateInterval.value) {
+				clearInterval(locationUpdateInterval.value);
+			}
+			
+			if (nearbyUsersUpdateInterval.value) {
+				clearInterval(nearbyUsersUpdateInterval.value);
+			}
+			
+			if (walkingTimer.value) {
+				clearInterval(walkingTimer.value);
+			}
+			
+			// 鍋滄璁惧鏂瑰悜鐩戝惉
+			if (typeof uni.stopDeviceMotionListening === 'function') {
+				uni.stopDeviceMotionListening({
+					success: () => {
+						console.log('璁惧鏂瑰悜鐩戝惉宸插仠姝?);
+					}
+				});
+			}
+			
+			// 鍙栨秷缃楃洏鐩戝惉
+			if (typeof uni.offCompassChange === 'function') {
+				uni.offCompassChange();
+			}
+		});
+		
+		// 寮哄埗鍒锋柊鐢ㄦ埛鏍囪
+		function forceRefreshMarker(forceUseUploaded = false) {
+			// 纭繚鏈変綅缃俊鎭?			if (!currentLocation.value || typeof currentLocation.value.latitude === 'undefined') {
+				console.error('褰撳墠浣嶇疆淇℃伅涓嶅彲鐢紝鏃犳硶娣诲姞鏍囪');
+				uni.showToast({
+					title: '鏃犳硶鑾峰彇浣嶇疆淇℃伅',
+					icon: 'none'
+				});
+				return;
+			}
+			
+			// 妫€鏌serStore鐘舵€?			console.log('==== 鐢ㄦ埛淇℃伅璋冭瘯 ====');
+			console.log('userStore.userInfo:', userStore.userInfo);
+			console.log('userStore.token:', userStore.token);
+			console.log('userStore.isAuthenticated:', userStore.isAuthenticated);
+			console.log('==== 澶村儚淇℃伅璋冭瘯 ====');
+			console.log('鍘熷澶村儚璺緞:', userStore.userInfo?.avatar);
+			
+			// 鍏堟竻鐞嗘墍鏈夊綋鍓嶇敤鎴风殑鏍囪
+			if (map.value) {
+				const allMapMarkers = map.value.getAllOverlays('marker');
+				console.log(`娓呯悊鍓嶅湴鍥句笂鏈?${allMapMarkers.length} 涓爣璁癭);
+				
+				// 绉婚櫎鎵€鏈変笌褰撳墠鐢ㄦ埛鐩稿叧鐨勬爣璁帮紝鍖呮嫭"current-user-location"鏍囪
+				allMapMarkers.forEach(marker => {
+					try {
+						const markerId = marker?.getExtData?.()?.userId;
+						if (markerId === 'current-user-location' || 
+							(userStore.userInfo && markerId === userStore.userInfo.id)) {
+							console.log(`绉婚櫎鐢ㄦ埛鏍囪: ${markerId}`);
+							map.value.remove(marker);
+							// 鍚屾椂浠巙serMarkers瀵硅薄涓Щ闄?							if (userMarkers[markerId]) {
+								delete userMarkers[markerId];
+							}
+						}
+					} catch (err) {
+						console.error('澶勭悊鏍囪鏃跺嚭閿?', err);
+					}
+				});
+				
+				// 鐭殏寤惰繜鍚庡啀鍒涘缓鏂版爣璁帮紝纭繚鏃ф爣璁拌瀹屽叏娓呯悊
+				setTimeout(() => {
+					// 鍒涘缓鏂版爣璁帮紝鐜板湪鍙細鍒涘缓涓€涓?					console.log('鍒涘缓鏂扮殑鐢ㄦ埛鏍囪');
+					toggleMarker();
+				}, 100);
+			}
+		}
+
+		// 鍒涘缓榛樿鐢ㄦ埛鏍囪
+		function createDefaultUserMarker() {
+			// 缁樺埗榛樿钃濊壊鍦嗗舰鏍囪
+			const ctx = uni.createCanvasContext('debug-canvas');
+			
+			// 璁剧疆鏇村ぇ鐨勫昂瀵?			const canvasSize = 100;
+			const centerPoint = canvasSize / 2;
+			const borderWidth = 6;
+			
+			// 娓呯┖鐢诲竷
+			ctx.clearRect(0, 0, canvasSize, canvasSize);
+			
+			// 娣诲姞闃村奖鏁堟灉
+			ctx.setShadow(0, 4, 8, 'rgba(0, 0, 0, 0.4)');
+			
+			// 缁樺埗鐧借壊鑳屾櫙
+			ctx.beginPath();
+			ctx.arc(centerPoint, centerPoint, centerPoint - borderWidth, 0, 2 * Math.PI);
+			ctx.setFillStyle('white');
+			ctx.fill();
+			
+			// 鍏抽棴闃村奖
+			ctx.setShadow(0, 0, 0, 'rgba(0, 0, 0, 0)');
+			
+			// 鐢昏摑鑹插渾褰?			ctx.beginPath();
+			ctx.arc(centerPoint, centerPoint, centerPoint - (borderWidth * 2), 0, 2 * Math.PI);
+			ctx.setFillStyle('#007AFF');
+			ctx.fill();
+			
+			// 娣诲姞鐢ㄦ埛棣栧瓧姣嶆垨鍥炬爣
+			if (userStore.userInfo && userStore.userInfo.nickname) {
+				ctx.setFillStyle('white');
+				ctx.setFontSize(32); // 澧炲ぇ瀛椾綋
+				ctx.setTextAlign('center');
+				ctx.setTextBaseline('middle');
+				const initial = userStore.userInfo.nickname.charAt(0).toUpperCase();
+				ctx.fillText(initial, centerPoint, centerPoint);
+			} else {
+				// 缁樺埗绠€鍗曠殑瀹犵墿鍥炬爣
+				ctx.beginPath();
+				ctx.moveTo(centerPoint - 15, centerPoint - 15);
+				ctx.arc(centerPoint - 15, centerPoint - 15, 6, 0, 2 * Math.PI); // 宸︾溂
+				ctx.moveTo(centerPoint + 15, centerPoint - 15);
+				ctx.arc(centerPoint + 15, centerPoint - 15, 6, 0, 2 * Math.PI); // 鍙崇溂
+				ctx.moveTo(centerPoint, centerPoint + 10);
+				ctx.arc(centerPoint, centerPoint + 10, 12, 0, Math.PI); // 绗戣劯
+				ctx.setStrokeStyle('white');
+				ctx.setLineWidth(3);
+				ctx.stroke();
+			}
+			
+			// 缁樺埗鍒癈anvas
+			ctx.draw(false, () => {
+				uni.canvasToTempFilePath({
+					canvasId: 'debug-canvas',
+					success: (res) => {
+						// 浣跨敤榛樿鏍囪
+						const mapCtx = uni.createMapContext('map');
+						const marker = {
+							id: 'user-location',
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							iconPath: res.tempFilePath,
+							width: 60,
+							height: 60,
+							anchor: {
+								x: 0.5,
+								y: 0.5
+							},
+							callout: {
+								content: userStore.userInfo?.nickname || '鎴戠殑浣嶇疆',
+								color: '#333333',
+								fontSize: 14,
+								borderRadius: 4,
+								bgColor: '#ffffff',
+								padding: 8,
+								display: 'BYCLICK'
+							},
+							class: 'custom-marker-class',
+							clickable: true,
+							zIndex: 999
+						};
+						
+						mapCtx.addMarkers({
+							markers: [marker],
+							success: () => {
+								console.log('鎴愬姛娣诲姞榛樿鏍囪');
+							},
+							fail: (err) => {
+								console.error('娣诲姞榛樿鏍囪澶辫触:', err);
+								// 澶囬€夋柟娉曪細鐩存帴娣诲姞鍒癿arkers鏁扮粍
+								markers.value = markers.value.filter(m => m.id !== 'user-location');
+								markers.value.push(marker);
+							}
+						});
+					},
+					fail: (err) => {
+						console.error('榛樿鏍囪Canvas杞崲澶辫触:', err);
+						// 鏈€鍚庣殑澶囬€夋柟妗堬紝鍒涘缓涓€涓潪甯哥畝鍗曠殑鏍囪
+						const simpleMarker = {
+							id: 'user-location',
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							iconPath: defaultAvatarBase64,
+							width: 60,
+							height: 60,
+							anchor: {
+								x: 0.5,
+								y: 0.5
+							},
+							class: 'custom-marker-class',
+							clickable: true,
+							zIndex: 999
+						};
+						markers.value = markers.value.filter(m => m.id !== 'user-location');
+						markers.value.push(simpleMarker);
+					}
+				});
+			});
+		}
+
+		// 閲嶆柊鍔犺浇鐢ㄦ埛淇℃伅
+		async function reloadUserInfo() {
+			try {
+				console.log('寮€濮嬮噸鏂板姞杞界敤鎴蜂俊鎭?..');
+				
+				// 鍏堣緭鍑哄綋鍓嶇敤鎴蜂俊鎭拰澶村儚璺緞
+				console.log('褰撳墠鐢ㄦ埛淇℃伅:', JSON.stringify(userStore.userInfo));
+				console.log('褰撳墠澶村儚璺緞:', userStore.userInfo?.avatar);
+				console.log('褰撳墠璁＄畻鐨勫ご鍍廢RL:', userAvatar.value);
+				
+				// 閲嶆柊浠庢湇鍔″櫒鑾峰彇鐢ㄦ埛淇℃伅
+				await userStore.fetchUserInfo();
+				
+				// 杈撳嚭鏇存柊鍚庣殑鐢ㄦ埛淇℃伅鍜屽ご鍍忚矾寰?				console.log('鏇存柊鍚庣殑鐢ㄦ埛淇℃伅:', JSON.stringify(userStore.userInfo));
+				console.log('鏇存柊鍚庣殑澶村儚璺緞:', userStore.userInfo?.avatar);
+				console.log('鏇存柊鍚庣殑璁＄畻澶村儚URL:', userAvatar.value);
+				
+				// 妫€鏌ョ幆澧冨彉閲?				console.log('鐜鍙橀噺VITE_API_URL:', import.meta.env.VITE_API_URL);
+				
+				// 寮哄埗鍒锋柊鏍囪 - 浣跨敤寮哄埗涓婁紶澶村儚妯″紡
+				uni.showToast({
+					title: '鐢ㄦ埛淇℃伅宸叉洿鏂?,
+					icon: 'none'
+				});
+				
+				// 寤惰繜涓€涓嬪啀鍒锋柊鏍囪锛岀‘淇濇暟鎹凡鏇存柊
+				setTimeout(() => {
+					forceRefreshMarker(true); // 浣跨敤寮哄埗涓婁紶澶村儚妯″紡
+				}, 500);
+			} catch (error) {
+				console.error('閲嶆柊鍔犺浇鐢ㄦ埛淇℃伅澶辫触:', error);
+				uni.showToast({
+					title: '鏇存柊鐢ㄦ埛淇℃伅澶辫触',
+					icon: 'none'
+				});
+			}
+		}
+
+		// 娓呴櫎澶村儚缂撳瓨
+		async function clearAvatarCache() {
+			try {
+				console.log('寮€濮嬫竻闄ゅご鍍忕紦瀛?..');
+				
+				// 1. 灏濊瘯娓呴櫎鏈湴瀛樺偍涓殑鐢ㄦ埛淇℃伅
+				uni.removeStorageSync('userInfo');
+				console.log('宸叉竻闄ゆ湰鍦扮敤鎴蜂俊鎭紦瀛?);
+				
+				// 2. 閲嶆柊鑾峰彇鏈€鏂扮敤鎴蜂俊鎭?				await userStore.fetchUserInfo();
+				console.log('宸查噸鏂拌幏鍙栫敤鎴蜂俊鎭?', userStore.userInfo);
+				
+				// 3. 娓呴櫎uni鐨勬枃浠剁紦瀛?濡傛灉鏈夊ご鍍?
+				if (userStore.userInfo?.avatar) {
+					const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+					const avatarUrl = userStore.userInfo.avatar.startsWith('/uploads/') 
+						? baseUrl + userStore.userInfo.avatar
+						: userStore.userInfo.avatar;
+					
+					console.log('娓呴櫎澶村儚URL缂撳瓨:', avatarUrl);
+					
+					// 寮哄埗閲嶆柊涓嬭浇澶村儚
+					uni.downloadFile({
+						url: avatarUrl,
+						success: (res) => {
+							console.log('澶村儚閲嶆柊涓嬭浇鎴愬姛:', res.tempFilePath);
+							
+							// 浣跨敤鏂颁笅杞界殑澶村儚寮哄埗鍒锋柊鏍囪
+							createUserMarkerWithImage(res.tempFilePath);
+							
+							uni.showToast({
+								title: '澶村儚缂撳瓨宸叉竻闄?,
+								icon: 'success'
+							});
+						},
+						fail: (err) => {
+							console.error('澶村儚閲嶆柊涓嬭浇澶辫触:', err);
+							uni.showToast({
+								title: '澶村儚缂撳瓨娓呴櫎澶辫触',
+								icon: 'none'
+							});
+						}
+					});
+				} else {
+					console.log('鐢ㄦ埛娌℃湁澶村儚锛屾棤闇€娓呴櫎缂撳瓨');
+					uni.showToast({
+						title: '鐢ㄦ埛娌℃湁澶村儚',
+						icon: 'none'
+					});
+				}
+			} catch (error) {
+				console.error('娓呴櫎澶村儚缂撳瓨澶辫触:', error);
+				uni.showToast({
+					title: '缂撳瓨娓呴櫎澶辫触',
+					icon: 'none'
+				});
+			}
+		}
+
+		// 娣诲姞浣嶇疆鍏变韩鐘舵€佹寚绀?		const locationSharingStatusVisible = ref(false);
+		const locationSharingStatus = ref('鏈叡浜?);
+        
+        // 淇濆瓨閬涚嫍璁板綍鍒板悗绔?- 瀹氫箟鍦╰oggleWalkingMode涔嬪墠
+        async function saveWalkRecord() {
+            try {
+                console.log('寮€濮嬩繚瀛橀仜鐙楄褰?..');
+                
+                // 閫夋嫨绗竴涓疇鐗╋紙濡傛灉鏈夛級
+                const petId = myPets.value.length > 0 ? (myPets.value[0]._id || myPets.value[0].id) : null;
+                const petInfo = myPets.value.length > 0 ? myPets.value[0] : null;
+                
+                if (!petId) {
+                    console.warn('娌℃湁瀹犵墿淇℃伅锛屾棤娉曚繚瀛橀仜鐙楄褰?);
+                    uni.showToast({
+                        title: '璇峰厛娣诲姞瀹犵墿',
+                        icon: 'none'
+                    });
+                    return Promise.reject(new Error('娌℃湁瀹犵墿淇℃伅'));
+                }
+                
+                // 鍑嗗閬涚嫍璁板綍鏁版嵁
+                const walkData = {
+                    pet: {
+                        _id: petId,
+                        name: petInfo?.name || '鏈懡鍚嶅疇鐗?,
+                        avatar: petInfo?.avatar || '/static/images/default-pet.png'
+                    },
+                    distance: walkingDistance.value, // 浠ョ背涓哄崟浣?                    duration: walkingDuration.value, // 浠ョ涓哄崟浣?                    startTime: new Date(walkingStartTime.value).toISOString(),
+                    endTime: new Date().toISOString(),
+                    route: walkingLocations.value,
+                    mapImageUrl: '/static/images/default-map.png' // 榛樿鍦板浘鍥剧墖
+                };
+                
+                console.log('鍙戦€侀仜鐙楄褰曟暟鎹?', {
+                    瀹犵墿ID: walkData.pet._id,
+                    瀹犵墿鍚嶇О: walkData.pet.name,
+                    璺濈: `${walkData.distance}绫?(${(walkData.distance/1000).toFixed(2)}鍏噷)`,
+                    鏃堕暱: `${walkData.duration}绉?(${Math.floor(walkData.duration/60)}鍒?{walkData.duration%60}绉?`,
+                    寮€濮嬫椂闂? new Date(walkData.startTime).toLocaleString(),
+                    缁撴潫鏃堕棿: new Date(walkData.endTime).toLocaleString(),
+                    璺嚎鐐规暟: walkData.route.length
+                });
+                
+                // 璋冪敤API淇濆瓨璁板綍
+                console.log('璋冪敤API: api.walk.startWalk, URL: /api/walks/start');
+                const result = await api.walk.startWalk(walkData);
+                console.log('閬涚嫍璁板綍淇濆瓨缁撴灉:', result);
+                
+                // 浠庣粨鏋滀腑鑾峰彇walkId锛堝吋瀹瑰绉嶈繑鍥炴牸寮忥級
+                let walkId = null;
+                
+                if (result && result.code === 0 && result.data) {
+                    // 鏍囧噯鏍煎紡: { code: 0, message: '鎴愬姛', data: { walkId: 'xxx' } }
+                    walkId = result.data.walkId;
+                    console.log('浠庢爣鍑嗘牸寮忚幏鍙杦alkId:', walkId);
+                } else if (result && (result._id || result.id)) {
+                    // 瀵硅薄鏍煎紡: { _id: 'xxx', ...}
+                    walkId = result._id || result.id;
+                    console.log('浠庡璞″睘鎬ц幏鍙杦alkId:', walkId);
+                } else if (result && result.data && (result.data._id || result.data.id || result.data.walkId)) {
+                    // 宓屽鏍煎紡: { data: { _id: 'xxx', ...} }
+                    walkId = result.data._id || result.data.id || result.data.walkId;
+                    console.log('浠庡祵濂楀璞¤幏鍙杦alkId:', walkId);
+                }
+                
+                if (!walkId) {
+                    console.error('鏃犳硶浠嶢PI鍝嶅簲鑾峰彇walkId:', result);
+                    return Promise.reject(new Error('鏃犳硶鑾峰彇閬涚嫍璁板綍ID'));
+                }
+                
+                console.log('閬涚嫍璁板綍鍒涘缓鎴愬姛锛孖D:', walkId);
+                
+                // 寤惰繜涓€涓嬪啀缁撴潫閬涚嫍璁板綍锛岀‘淇濆紑濮嬭褰曞凡琚鐞?                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // 缁撴潫閬涚嫍璁板綍
+                try {
+                    console.log(`璋冪敤API: api.walk.endWalk, URL: /api/walks/${walkId}/end`);
+                    const endResult = await api.walk.endWalk(walkId, {
+                        distance: walkingDistance.value,
+                        duration: walkingDuration.value,
+                        endTime: new Date().toISOString()
+                    });
+                    
+                    console.log('閬涚嫍璁板綍缁撴潫缁撴灉:', endResult);
+                } catch (endError) {
+                    // 缁撴潫閬涚嫍鍑洪敊锛屼絾浠嶇劧杩斿洖walkId锛屽洜涓鸿褰曞凡鍒涘缓
+                    console.error('缁撴潫閬涚嫍璁板綍澶辫触锛屼絾鍒濆璁板綍宸蹭繚瀛?', endError);
+                }
+                
+                // 鏄剧ず鎴愬姛鎻愮ず
+                uni.showToast({
+                    title: '璁板綍宸蹭繚瀛?,
+                    icon: 'success'
+                });
+                
+                // 寤惰繜3绉掑悗瀵艰埅鍒拌褰曢〉闈?                setTimeout(() => {
+                    console.log('鍑嗗璺宠浆鍒伴仜鐙楄褰曢〉闈?..');
+                    uni.navigateTo({
+                        url: '/pages/walk/history',
+                        success: () => {
+                            console.log('鎴愬姛璺宠浆鍒伴仜鐙楄褰曢〉闈?);
+                        },
+                        fail: (err) => {
+                            console.error('璺宠浆鍒伴仜鐙楄褰曢〉闈㈠け璐?', err);
+                        }
+                    });
+                }, 3000);
+                
+                return Promise.resolve(walkId);
+            } catch (error) {
+                console.error('淇濆瓨閬涚嫍璁板綍鍑洪敊:', error);
+                console.error('閿欒璇︽儏:', error.message || '鏈煡閿欒');
+                if (error.statusCode) {
+                    console.error('HTTP鐘舵€佺爜:', error.statusCode);
+                    
+                    if (error.statusCode === 404) {
+                        console.error('API绔偣涓嶅瓨鍦紝浣跨敤鏈湴瀛樺偍');
+                        
+                        // 濡傛灉API绔偣涓嶅瓨鍦紝灏濊瘯鐩存帴浣跨敤walkStorage
+                        try {
+                            const walkStorage = uni.requireNativePlugin('walkStorage') || require('@/utils/walkStorage.js').default;
+                            
+                            // 鍑嗗閬涚嫍璁板綍鏁版嵁
+                            const walkData = {
+                                pet: {
+                                    _id: myPets.value.length > 0 ? (myPets.value[0]._id || myPets.value[0].id) : 'default-pet',
+                                    name: myPets.value.length > 0 ? myPets.value[0].name : '鏈懡鍚嶅疇鐗?,
+                                    avatar: myPets.value.length > 0 ? myPets.value[0].avatar : '/static/images/default-pet.png'
+                                },
+                                distance: walkingDistance.value,
+                                duration: walkingDuration.value,
+                                startTime: new Date(walkingStartTime.value).toISOString(),
+                                endTime: new Date().toISOString(),
+                                route: walkingLocations.value
+                            };
+                            
+                            console.log('灏濊瘯浣跨敤鏈湴瀛樺偍淇濆瓨閬涚嫍璁板綍');
+                            const result = walkStorage.saveWalkRecord(walkData);
+                            console.log('鏈湴瀛樺偍淇濆瓨缁撴灉:', result);
+                            
+                            if (result && result.code === 0 && result.data && result.data.walkId) {
+                                return Promise.resolve(result.data.walkId);
+                            } else {
+                                throw new Error('鏈湴瀛樺偍淇濆瓨澶辫触');
+                            }
+                        } catch (localError) {
+                            console.error('浣跨敤鏈湴瀛樺偍淇濆瓨澶辫触:', localError);
+                        }
+                    }
+                }
+                
+                uni.showToast({
+                    title: '淇濆瓨璁板綍澶辫触: ' + (error.message || '鏈煡閿欒'),
+                    icon: 'none',
+                    duration: 3000
+                });
+                throw error;
+            }
+        }
+
+		// 鍒囨崲閬涚嫍妯″紡
+		function toggleWalkingMode() {
+			console.log('鍒囨崲閬涚嫍妯″紡锛屽綋鍓嶇姸鎬?', isWalking.value);
+			
+			// 濡傛灉宸茬粡鍦ㄨ璧扮姸鎬侊紝鍋滄琛岃蛋
+			if (isWalking.value) {
+				// 鍋滄閬涚嫍
+				isWalking.value = false;
+				clearInterval(walkingTimer.value);
+				walkingTimer.value = null;
+				
+				// 鍋滄浣嶇疆鍏变韩
+				isLocationShared.value = false;
+				locationSharingStatusVisible.value = false;
+				
+				// 鏄剧ず褰撳墠閬涚嫍鏃堕棿浠ヤ究璋冭瘯
+				console.log('閬涚嫍缁撴潫锛屾椂闀?', walkingDuration.value, '绉?);
+				console.log('閬涚嫍璺濈:', walkingDistance.value, '绫?);
+				
+				// 妫€鏌ラ仜鐙楁椂闂达紙娴嬭瘯鏃惰缃负5绉掞紝姝ｅ紡鐜搴旇鏄?0绉掓垨鏇撮暱锛?				const minWalkTime = 5; // 鍦ㄦ祴璇曠幆澧冧腑璁剧疆杈冪煭鐨勬渶灏忛仜鐙楁椂闂?				
+				if (walkingDuration.value >= minWalkTime) {
+					// 鍏堝噯澶囨憳瑕佸唴瀹?					prepareWalkSummary();
+					
+					// 灏濊瘯淇濆瓨閬涚嫍璁板綍
+					saveWalkRecord().then(walkId => {
+						// 淇濆瓨鎴愬姛鍚庢樉绀烘憳瑕?						console.log('閬涚嫍璁板綍淇濆瓨鎴愬姛锛孖D:', walkId);
+						showWalkSummary.value = true;
+						
+						// 鎻愮ず鐢ㄦ埛淇濆瓨鎴愬姛
+						uni.showToast({
+							title: '璁板綍宸蹭繚瀛?,
+							icon: 'success',
+							duration: 2000
+						});
+					}).catch(error => {
+						console.error('淇濆瓨閬涚嫍璁板綍澶辫触:', error);
+						// 鍗充娇淇濆瓨澶辫触涔熸樉绀烘憳瑕?						showWalkSummary.value = true;
+						// 鎻愮ず鐢ㄦ埛淇濆瓨澶辫触
+						uni.showToast({
+							title: '璁板綍淇濆瓨澶辫触锛屼娇鐢ㄦ湰鍦板瓨鍌?,
+							icon: 'none',
+							duration: 2000
+						});
+					});
+				} else {
+					// 鏃堕棿澶煭锛屼笉淇濆瓨璁板綍
+					console.log('閬涚嫍鏃堕棿澶煭锛屼笉淇濆瓨璁板綍');
+					uni.showToast({
+						title: `閬涚嫍鏃堕棿澶煭锛堝皯浜?{minWalkTime}绉掞級锛屾湭淇濆瓨璁板綍`,
+						icon: 'none',
+						duration: 2000
+					});
+				}
+			} else {
+				// 濡傛灉涓嶅湪琛岃蛋鐘舵€侊紝鏄剧ず浣嶇疆鍏变韩鎻愮ず
+				showLocationSharingTip.value = true;
+			}
+		}
+
+		// 鍙栨秷浣嶇疆鍏变韩 - 淇API閿欒
+		function cancelLocationSharing() {
+		  try {
+			// 鐩存帴鍦ㄦ湰鍦扮鐢ㄤ綅缃叡浜紝涓嶈皟鐢ˋPI
+			isLocationShared.value = false;
+			showLocationSharingTip.value = false;
+			
+			// 鏇存柊鏈湴鐘舵€佽€岄潪鏈嶅姟鍣ㄧ姸鎬?			console.log('宸茬鐢ㄤ綅缃叡浜紙鏈湴锛?);
+			
+			// 鏄剧ず鐘舵€佸彉鏇撮€氱煡
+			uni.showToast({
+			  title: '宸插仠姝綅缃叡浜?,
+			  icon: 'none'
+			});
+		  } catch (error) {
+			console.error('鍋滄浣嶇疆鍏变韩鍑洪敊:', error);
+		  }
+		}
+
+		// 纭浣嶇疆鍏变韩 - 淇API閿欒
+		function confirmLocationSharing() {
+		  try {
+			// 鐩存帴鍦ㄦ湰鍦板惎鐢ㄤ綅缃叡浜紝涓嶈皟鐢ˋPI
+			isLocationShared.value = true;
+			showLocationSharingTip.value = false;
+			
+			// 鏇存柊鏈湴鐘舵€?			console.log('宸插惎鐢ㄤ綅缃叡浜紙鏈湴锛?);
+			
+			// 鏄剧ず鐘舵€佸彉鏇撮€氱煡
+			uni.showToast({
+			  title: '宸插紑濮嬩綅缃叡浜?,
+			  icon: 'success'
+			});
+			
+			// 绔嬪嵆鏇存柊浣嶇疆
+			startLocationSharing();
+			
+			// 寮€濮嬮仜鐙楁ā寮?			startWalkingMode();
+		  } catch (error) {
+			console.error('寮€濮嬩綅缃叡浜嚭閿?', error);
+		  }
+		}
+
+		// 寮€濮嬮仜鐙楁ā寮?		function startWalkingMode() {
+			// 寮€濮嬮仜鐙?			isWalking.value = true;
+			walkingStartTime.value = Date.now();
+			walkingDistance.value = 0;
+			walkingDuration.value = 0;
+			walkingLocations.value = [
+				{ latitude: currentLocation.value.latitude, longitude: currentLocation.value.longitude }
+			];
+			walkingPath.value = [{
+				points: [
+					{ latitude: currentLocation.value.latitude, longitude: currentLocation.value.longitude }
+				],
+				color: '#007AFF',
+				width: 4
+			}];
+			
+			// 娓呴櫎鍙兘瀛樺湪鐨勬棫璁℃椂鍣?			if (walkingTimer.value) {
+				clearInterval(walkingTimer.value);
+			}
+			
+			// 鍚姩璁℃椂鍣?			console.log('寮€濮嬮仜鐙楋紝璁剧疆璁℃椂鍣?);
+			walkingTimer.value = setInterval(() => {
+				const currentTime = Date.now();
+				const elapsedSeconds = Math.floor((currentTime - walkingStartTime.value) / 1000);
+				walkingDuration.value = elapsedSeconds;
+				
+				// 姣?0绉掕緭鍑轰竴娆″綋鍓嶉仜鐙楁椂闀匡紝鏂逛究璋冭瘯
+				if (elapsedSeconds % 30 === 0 && elapsedSeconds > 0) {
+					console.log('閬涚嫍杩涜涓紝宸茬粡', elapsedSeconds, '绉?);
+				}
+			}, 1000);
+			
+			// 璁板綍閬涚嫍寮€濮嬬殑淇℃伅
+			console.log('閬涚嫍妯″紡宸插紑濮?', {
+				寮€濮嬫椂闂? new Date(walkingStartTime.value).toLocaleTimeString(),
+				鍒濆浣嶇疆: walkingLocations.value[0]
+			});
+		}
+
+		// 娣诲姞鍦板浘鎷栧姩鐘舵€佽窡韪?		const mapIsDragging = ref(false);
+
+		// 娣诲姞鍦板浘寮€濮嬫嫋鍔ㄤ簨浠跺鐞?		function onMapDragStart() {
+			console.log('鍦板浘寮€濮嬫嫋鍔?);
+			mapIsDragging.value = true;
+		}
+
+		// 娣诲姞鍦板浘缁撴潫鎷栧姩浜嬩欢澶勭悊
+		function onMapDragEnd() {
+			console.log('鍦板浘缁撴潫鎷栧姩');
+			setTimeout(() => {
+				mapIsDragging.value = false;
+			}, 50); // 鐭殏寤惰繜锛岄伩鍏嶄笌鐐瑰嚮浜嬩欢鍐茬獊
+		}
+
+		// 澧炲己鍨嬪湴鍥剧偣鍑讳簨浠讹紝澶勭悊鏍囪鐐瑰嚮
+		function onMapTap(e) {
+			console.log('鍦板浘鐐瑰嚮浜嬩欢:', e);
+			
+			// 濡傛灉姝ｅ湪鎷栧姩鍦板浘锛屼笉澶勭悊鐐瑰嚮
+			if (mapIsDragging.value) {
+				console.log('鍦板浘姝ｅ湪鎷栧姩锛屽拷鐣ョ偣鍑?);
+				return;
+			}
+			
+			// 鑾峰彇鐐瑰嚮鍧愭爣
+			const { x, y } = e.detail;
+			
+			// 濡傛灉娌℃湁鍧愭爣锛屾棤娉曞鐞?			if (x === undefined || y === undefined) {
+				console.log('鐐瑰嚮浜嬩欢娌℃湁鍧愭爣淇℃伅');
+				return;
+			}
+			
+			// 鑾峰彇椤甸潰涓婃墍鏈夊彲瑙佺殑鏍囪鍏冪礌
+			try {
+				// 1. 鍏堝皾璇曠洿鎺ヨ幏鍙栭珮寰峰湴鍥炬爣璁?				const amapMarkers = document.querySelectorAll('.amap-marker');
+				if (amapMarkers.length > 0) {
+					console.log('鎵惧埌楂樺痉鍦板浘鏍囪:', amapMarkers.length, '涓?);
+					
+					// 妫€鏌ョ偣鍑绘槸鍚﹀湪鏍囪鍏冪礌涓?					for (const marker of amapMarkers) {
+						const rect = marker.getBoundingClientRect();
+						
+						// 妫€鏌ョ偣鍑荤偣鏄惁鍦ㄦ爣璁板厓绱犵殑鐭╁舰鍖哄煙鍐?						if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+							console.log('鐐瑰嚮鍛戒腑鏍囪鍏冪礌:', marker);
+							
+							// 灏濊瘯浠庡厓绱犺幏鍙栨爣璁癐D
+							const markerId = marker.getAttribute('data-id') || 
+											marker.id || 
+											marker.getAttribute('id');
+							
+							if (markerId) {
+								// 鏈塈D锛岃Е鍙戞爣璁扮偣鍑讳簨浠?								console.log('瑙﹀彂鏍囪鐐瑰嚮:', markerId);
+								onMarkerTap({detail: {markerId: markerId}});
+								return; // 澶勭悊瀹屾垚锛岄€€鍑哄嚱鏁?							}
+							
+							// 娌℃湁ID锛屼絾纭疄鐐瑰嚮浜嗘爣璁帮紝浠庨檮杩戠敤鎴蜂腑鎵惧嚭鏈€鎺ヨ繎鐨?							const closestUser = findClosestUserToClick(x, y);
+							if (closestUser) {
+								console.log('鎵惧埌鏈€鎺ヨ繎鐨勭敤鎴?', closestUser.nickname || closestUser.username);
+								onMarkerTap({detail: {markerId: closestUser.id}});
+								return;
+							}
+						}
+					}
+				}
+				
+				// 2. 灏濊瘯鏌ユ壘闄勮繎鐢ㄦ埛涓渶鎺ヨ繎鐐瑰嚮浣嶇疆鐨?				const closestUser = findClosestUserToClick(x, y);
+				if (closestUser) {
+					console.log('鎵惧埌鏈€鎺ヨ繎鐨勭敤鎴?', closestUser.nickname || closestUser.username);
+					onMarkerTap({detail: {markerId: closestUser.id}});
+					return;
+				}
+			} catch (error) {
+				console.error('澶勭悊鍦板浘鐐瑰嚮浜嬩欢鍑洪敊:', error);
+			}
+			
+			// 濡傛灉鐐瑰嚮浜嬩欢娌℃湁琚鐞嗕负鏍囪鐐瑰嚮锛屽垯鍏抽棴鐢ㄦ埛寮圭獥
+			if (showUserPopup.value) {
+				showUserPopup.value = false;
+			}
+		}
+
+		// 鏌ユ壘鏈€鎺ヨ繎鐐瑰嚮浣嶇疆鐨勭敤鎴?		function findClosestUserToClick(clickX, clickY) {
+			if (!nearbyUsers.value || !nearbyUsers.value.length) return null;
+			
+			// 鑾峰彇鍦板浘鍏冪礌
+			const mapElement = document.getElementById('map');
+			if (!mapElement) return null;
+			
+			const mapRect = mapElement.getBoundingClientRect();
+			const mapWidth = mapRect.width;
+			const mapHeight = mapRect.height;
+			
+			// 鑾峰彇鍦板浘涓績鐐瑰儚绱犲潗鏍?			const centerX = mapRect.left + mapWidth / 2;
+			const centerY = mapRect.top + mapHeight / 2;
+			
+			// 璁＄畻鐐瑰嚮鐐圭浉瀵逛簬鍦板浘涓績鐨勫亸绉婚噺锛堝儚绱狅級
+			const offsetX = clickX - centerX;
+			const offsetY = clickY - centerY;
+			
+			// 鏍规嵁褰撳墠鍦板浘姣斾緥灏猴紝浼扮畻鍋忕Щ閲忓搴旂殑缁忕含搴﹀彉鍖?			// 娉ㄦ剰锛氳繖鏄竴涓畝鍖栫殑浼扮畻锛屽疄闄呰绠椾細鏇村鏉?			const scale = mapScale.value;
+			const latPerPixel = 0.000005 * (20 / scale); // 绮楃暐浼拌姣忓儚绱犵含搴﹀彉鍖?			const lngPerPixel = 0.000005 * (20 / scale) / Math.cos(currentLocation.value.latitude * Math.PI / 180); // 鑰冭檻绾害瀵圭粡搴︾殑褰卞搷
+			
+			// 璁＄畻鐐瑰嚮浣嶇疆鐨勪及璁＄粡绾害
+			const clickLat = currentLocation.value.latitude - offsetY * latPerPixel;
+			const clickLng = currentLocation.value.longitude + offsetX * lngPerPixel;
+			
+			console.log('鐐瑰嚮缁忕含搴︿及璁?', {lat: clickLat, lng: clickLng});
+			
+			// 鎵惧嚭鏈€鎺ヨ繎鐐瑰嚮浣嶇疆鐨勭敤鎴?			let closestUser = null;
+			let minDistance = Infinity;
+			
+			nearbyUsers.value.forEach(user => {
+				if (!user.latitude || !user.longitude) return;
+				
+				// 璁＄畻鐢ㄦ埛涓庣偣鍑讳綅缃殑璺濈
+				const distance = Math.sqrt(
+					Math.pow((user.latitude - clickLat) / latPerPixel, 2) + 
+					Math.pow((user.longitude - clickLng) / lngPerPixel, 2)
+				);
+				
+				// 璁剧疆涓€涓悎鐞嗙殑闃堝€硷紙绾?0鍍忕礌锛?				if (distance < 30 && distance < minDistance) {
+					minDistance = distance;
+					closestUser = user;
+				}
+			});
+			
+			return closestUser;
+		}
+
+		// 鍦板浘鍖哄煙鍙樻洿浜嬩欢
+		function onMapRegionChange(e) {
+			console.log('鍦板浘鍖哄煙鍙樻洿:', e);
+			// 澶勭悊鎷栧姩寮€濮嬪拰缁撴潫
+			if (e.type === 'begin' && e.causedBy === 'drag') {
+				onMapDragStart();
+			} else if (e.type === 'end' && e.causedBy === 'drag') {
+				onMapDragEnd();
+			}
+		}
+
+		// 鍦板浘瀹瑰櫒鐐瑰嚮澶勭悊
+		function onMapContainerClick(e) {
+			console.log('鍦板浘瀹瑰櫒鐐瑰嚮浜嬩欢:', e);
+			
+			// 鑾峰彇鐐瑰嚮鍧愭爣
+			const { clientX, clientY } = e;
+			
+			// 妫€鏌ユ槸鍚︾偣鍑讳簡鏍囪
+			const markers = document.querySelectorAll('.amap-marker');
+			for (const marker of markers) {
+				const rect = marker.getBoundingClientRect();
+				
+				// 妫€鏌ョ偣鍑绘槸鍚﹀湪鏍囪鍖哄煙鍐?				if (clientX >= rect.left && clientX <= rect.right && 
+					clientY >= rect.top && clientY <= rect.bottom) {
+					console.log('鐐瑰嚮浜嗘爣璁板厓绱?', marker);
+					
+					// 鑾峰彇鐢ㄦ埛ID
+					const userId = marker.getAttribute('data-user-id');
+					if (userId) {
+						console.log('瑙﹀彂鏍囪鐐瑰嚮, 鐢ㄦ埛ID:', userId);
+						e.stopPropagation();
+						onMarkerTap({detail: {markerId: userId}});
+						return;
+					}
+				}
+			}
+			
+			// 濡傛灉娌℃湁鐐瑰嚮鏍囪锛屽叧闂敤鎴峰脊绐?			if (showUserPopup.value) {
+				showUserPopup.value = false;
+			}
+		}
+
+		// 鍦板浘鏇存柊浜嬩欢澶勭悊鍑芥暟
+		function onMapUpdated(e) {
+			// 鍦板浘鏇存柊鏃剁殑鍥炶皟
+			console.log('鍦板浘鏇存柊浜嬩欢瑙﹀彂');
+			
+			// 瀹夊叏鏇存柊璋冭瘯淇℃伅
+			if (showDebug.value) {
+				try {
+					updateDebugInfo();
+				} catch (e) {
+					console.error('鏇存柊璋冭瘯淇℃伅閿欒:', e);
+				}
+			}
+			
+			// 妫€鏌ヤ綅缃叡浜姸鎬?			const sharingEnabled = locationStore.sharingEnabled;
+			isLocationShared.value = sharingEnabled;
+			console.log('浣嶇疆鍏变韩鐘舵€?', isLocationShared.value ? '宸插紑鍚? : '宸插叧闂?);
+			
+			// 鍗充娇浣嶇疆鍏变韩鍏抽棴锛屼篃鍏佽鍒涘缓鏍囪鍜屾煡鐪嬬敤鎴?			
+			// 妫€鏌ユ槸鍚﹂渶瑕佹坊鍔犵敤鎴锋爣璁?- 閬垮厤棰戠箒娣诲姞
+			if (!window._lastMarkerCheck || (Date.now() - window._lastMarkerCheck > 30000)) {
+				window._lastMarkerCheck = Date.now();
+				
+				try {
+					// 妫€鏌ユ槸鍚︽湁鐢ㄦ埛鏍囪
+					const hasUserMarker = allMarkers.value.some(m => m.id === 'user-location');
+					
+					if (currentLocation.value && 
+						typeof currentLocation.value.latitude !== 'undefined' && 
+						currentLocation.value.latitude !== null &&
+						!hasUserMarker) {
+						console.log('娣诲姞鐢ㄦ埛鏍囪...');
+						// 鑾峰彇鐢ㄦ埛澶村儚URL
+						const avatarUrl = userAvatar.value;
+						
+						// 鏍囪鐢ㄦ埛鑷韩鐨処D
+						const userId = userStore.userInfo ? userStore.userInfo.id : 'user-location';
+						
+						// 鑾峰彇鐢ㄦ埛褰撳墠浣嶇疆
+						const userPosition = [currentLocation.value.longitude, currentLocation.value.latitude];
+						
+						// 妫€鏌ユ槸鍚﹀凡缁忔槸Base64鏍煎紡
+						if (avatarUrl.startsWith('data:image/')) {
+							// 鐩存帴浣跨敤Base64鍒涘缓鏍囪
+							createUserMarkerWithImage(userId, userPosition, avatarUrl);
+						} else {
+							// 灏濊瘯鍔犺浇鍥剧墖
+							const img = new Image();
+							img.crossOrigin = 'anonymous';
+							img.onload = () => {
+								// 鍥剧墖鍔犺浇鎴愬姛锛屽垱寤虹敤鎴锋爣璁?								createUserMarkerWithImage(userId, userPosition, avatarUrl);
+							};
+							img.onerror = () => {
+								// 鍥剧墖鍔犺浇澶辫触锛屼娇鐢ㄩ粯璁ゅご鍍?								console.error('鍔犺浇鐢ㄦ埛澶村儚澶辫触锛屼娇鐢ㄩ粯璁ゅご鍍?);
+								createUserMarkerWithImage(userId, userPosition, defaultAvatarBase64);
+							};
+							img.src = avatarUrl;
+							
+							// 涓洪槻姝㈠浘鐗囧姞杞借秴鏃讹紝璁剧疆3绉掑悗浣跨敤榛樿澶村儚
+							setTimeout(() => {
+								if (!img.complete || img.naturalWidth === 0) {
+									createUserMarkerWithImage(userId, userPosition, defaultAvatarBase64);
+								}
+							}, 3000);
+						}
+					}
+				} catch (e) {
+					console.error('娣诲姞鏍囪閿欒:', e);
+				}
+			}
+		}
+
+		// 娣诲姞onMarkerTap鍑芥暟鐨勫畾涔?		async function onMarkerTap(e) {
+			try {
+				// 灏濊瘯浠庝簨浠跺璞¤幏鍙栨爣璁癐D
+				let markerId = e.markerId || e.detail?.markerId;
+				
+				// 濡傛灉浜嬩欢瀵硅薄娌℃湁markerId锛屽皾璇曚粠detail.marker鑾峰彇
+				if (!markerId && e.detail?.marker) {
+					markerId = e.detail.marker.id;
+				}
+				
+				// 濡傛灉杩樻病鏈夋壘鍒癿arkerId锛屽皾璇曚粠nativeEvent鑾峰彇
+				if (!markerId && e.detail?.nativeEvent) {
+					const target = e.detail.nativeEvent.target;
+					if (target && target.dataset) {
+						markerId = target.dataset.userId || target.dataset.id;
+					}
+				}
+				
+				// 澶勭悊鑾峰彇鍒扮殑鏍囪ID
+				if (markerId) {
+					console.log('鑾峰彇鍒版爣璁癐D:', markerId);
+					await processUserMarkerTap(markerId);
+				} else {
+					console.error('鏃犳硶鑾峰彇鏍囪ID');
+					// 灏濊瘯浠巒earbyUsers涓€夋嫨绗竴涓敤鎴蜂綔涓哄閫?					if (Array.isArray(nearbyUsers.value) && nearbyUsers.value.length > 0) {
+						console.log('浣跨敤绗竴涓檮杩戠敤鎴蜂綔涓哄閫?);
+						await processUserMarkerTap(nearbyUsers.value[0].id);
+					} else {
+						// 鏃犳硶纭畾鐢ㄦ埛锛屾樉绀烘彁绀?						uni.showToast({
+							title: '鏃犳硶鑾峰彇鐢ㄦ埛淇℃伅',
+							icon: 'none'
+						});
+					}
+				}
+			} catch (err) {
+				console.error('鏍囪鐐瑰嚮澶勭悊鍑洪敊:', err);
+				uni.showToast({
+					title: '鎿嶄綔澶辫触锛岃閲嶈瘯',
+					icon: 'none'
+				});
+			}
+		}
+
+		/**
+		 * 澶勭悊鐢ㄦ埛鏍囪鐐瑰嚮浜嬩欢
+		 * @param {String} markerId 鏍囪ID
+		 */
+		async function processUserMarkerTap(userId) {
+			console.log('澶勭悊鐢ㄦ埛鏍囪鐐瑰嚮浜嬩欢, 鐢ㄦ埛ID:', userId);
+			
+			try {
+				// 浣跨敤selectUserMarker鏂规硶鏄剧ず鐢ㄦ埛淇℃伅寮圭獥锛屽寘鍚叧娉ㄥ姛鑳?				await selectUserMarker(userId);
+			} catch (error) {
+				console.error('澶勭悊鐢ㄦ埛鏍囪鐐瑰嚮澶辫触:', error);
+			}
+		}
+
+		// 娣诲姞涓€涓嚱鏁版潵瀹氭湡鎵弿鍜屽鐞嗘爣璁板厓绱?		function setupMarkerClickHandlers() {
+			try {
+				// 鎵惧埌鎵€鏈堿Map鏍囪鍏冪礌
+				const markers = document.querySelectorAll('.amap-marker');
+				if (markers.length > 0) {
+					console.log('鍙戠幇鍦板浘鏍囪鍏冪礌:', markers.length, '涓?);
+					
+					// 璋冭瘯淇℃伅锛氭樉绀烘墍鏈夋爣璁板厓绱犵殑data-user-id灞炴€?					let userIDs = [];
+					markers.forEach(marker => {
+						const userId = marker.getAttribute('data-user-id') || 
+							(marker.id ? marker.id.match(/marker-([^"\s]+)/)?.[1] : null);
+						if (userId) userIDs.push(userId);
+					});
+					console.log('鍦板浘涓婄殑鐢ㄦ埛ID:', userIDs);
+					
+					// 浣跨敤setTimeout纭繚DOM鎿嶄綔鍦ㄦ覆鏌撳畬鎴愬悗杩涜
+					setTimeout(() => {
+						// 閬嶅巻鎵€鏈夋爣璁板厓绱?						markers.forEach((marker) => {
+							// 濡傛灉鏍囪娌℃湁clickHandler灞炴€э紝娣诲姞浜嬩欢鐩戝惉鍣?							if (!marker.hasAttribute('data-click-handler')) {
+								// 娣诲姞鐐瑰嚮浜嬩欢
+								marker.addEventListener('click', (e) => {
+									e.stopPropagation(); // 闃绘浜嬩欢鍐掓场
+									console.log('鏍囪鐐瑰嚮浜嬩欢 (鐩存帴):', marker);
+									
+									// 灏濊瘯鍚勭鏂规硶鑾峰彇鐢ㄦ埛ID
+									let userId = marker.getAttribute('data-user-id');
+									
+									// 灏濊瘯浠庣被鍚嶄腑鎻愬彇
+									if (!userId && marker.className) {
+										const match = marker.className.match(/user-marker-([^"\s]+)/);
+										if (match && match[1]) {
+											userId = match[1];
+										}
+									}
+									
+									// 灏濊瘯浠巑arker id涓彁鍙?									if (!userId && marker.id) {
+										const match = marker.id.match(/marker-([^"\s]+)/);
+										if (match && match[1]) {
+											userId = match[1];
+										}
+									}
+									
+									// 浠庡浘鍍忓厓绱犲皾璇曡幏鍙杣serId
+									if (!userId) {
+										const img = marker.querySelector('img');
+										if (img) {
+											userId = img.getAttribute('data-user-id');
+										}
+									}
+									
+									console.log('灏濊瘯鎻愬彇鐨勭敤鎴稩D:', userId);
+									
+									if (userId) {
+										console.log('鎵惧埌鐢ㄦ埛ID锛岃Е鍙戞爣璁扮偣鍑讳簨浠?', userId);
+										// 浣跨敤processUserMarkerTap澶勭悊鏍囪鐐瑰嚮
+										processUserMarkerTap(userId);
+									} else if (nearbyUsers.value && nearbyUsers.value.length > 0) {
+										// 濡傛灉鏃犳硶璇嗗埆锛屽皾璇曚娇鐢ㄧ涓€涓檮杩戠敤鎴?										console.log('鏃犳硶璇嗗埆鐢ㄦ埛ID锛屼娇鐢ㄧ涓€涓檮杩戠敤鎴?);
+										processUserMarkerTap(nearbyUsers.value[0].id);
+									}
+								});
+								
+								// 鏍囪姝ゅ厓绱犲凡娣诲姞浜嬩欢澶勭悊鍣?								marker.setAttribute('data-click-handler', 'true');
+								
+								// 璁剧疆鏍峰紡纭繚鍏冪礌鍙偣鍑?								marker.style.cursor = 'pointer';
+								marker.style.pointerEvents = 'auto';
+								marker.style.zIndex = '999';
+								
+								// 鎵惧埌鍐呴儴鍥惧儚鍏冪礌骞跺簲鐢ㄦ牱寮?								const iconElem = marker.querySelector('.amap-icon');
+								if (iconElem) {
+									iconElem.style.borderRadius = '50%';
+									iconElem.style.overflow = 'hidden';
+									
+									// 澶勭悊鍥惧儚鍏冪礌
+									const imgElem = iconElem.querySelector('img');
+									if (imgElem) {
+										// 涓哄浘鍍忚缃甦ata-user-id灞炴€?										const markerId = marker.getAttribute('data-user-id');
+										if (markerId) {
+											imgElem.setAttribute('data-user-id', markerId);
+											// 璋冭瘯淇℃伅
+											console.log('璁剧疆鍥惧儚鍏冪礌data-user-id灞炴€?', markerId);
+										}
+										
+										// 璁剧疆鏍峰紡
+										imgElem.style.borderRadius = '50%';
+										imgElem.style.width = '100%';
+										imgElem.style.height = '100%';
+										imgElem.style.objectFit = 'cover';
+										
+										// 涔熶负鍥惧儚娣诲姞鐐瑰嚮浜嬩欢
+										imgElem.addEventListener('click', (e) => {
+											e.stopPropagation();
+											console.log('鍥惧儚鐐瑰嚮浜嬩欢');
+											
+											// 鑾峰彇鐢ㄦ埛ID浠庤嚜韬垨鐖跺厓绱?											const imgUserId = imgElem.getAttribute('data-user-id') || 
+												marker.getAttribute('data-user-id');
+											
+											console.log('鍥惧儚鐐瑰嚮 - 鎻愬彇鐨勭敤鎴稩D:', imgUserId);
+											
+											if (imgUserId) {
+												console.log('鎵惧埌鍥惧儚鐢ㄦ埛ID锛屽鐞嗘爣璁扮偣鍑?', imgUserId);
+												processUserMarkerTap(imgUserId);
+											}
+										});
+									}
+								}
+							}
+						});
+					}, 100); // 娣诲姞100ms寤惰繜纭繚DOM瀹屽叏娓叉煋
+				}
+			} catch (e) {
+				console.error('澶勭悊鍦板浘鏍囪鍑洪敊:', e);
+			}
+		}
+
+		// 鍒涘缓璁℃椂鍣紝瀹氭湡鎵цsetupMarkerClickHandlers
+		let markerScanInterval;
+
+		// 鐩戝惉鐧诲綍鐘舵€佸彉鍖?		watch(() => userStore.isAuthenticated, (isAuthenticated) => {
+			console.log('鐢ㄦ埛鐧诲綍鐘舵€佸彉鏇?', isAuthenticated);
+			if (isAuthenticated) {
+				// 鐢ㄦ埛鐧诲綍锛岃幏鍙栧疇鐗╂暟鎹?				console.log('鐢ㄦ埛宸茬櫥褰曪紝鑾峰彇瀹犵墿鏁版嵁');
+				petStore.fetchPets().then(pets => {
+					console.log('鐧诲綍鍚庤幏鍙栧疇鐗╂暟鎹垚鍔?', pets);
+					myPets.value = pets;
+				}).catch(err => {
+					console.error('鐧诲綍鍚庤幏鍙栧疇鐗╂暟鎹け璐?', err);
+				});
+			} else {
+				// 鐢ㄦ埛鐧诲嚭锛屾竻绌哄疇鐗╂暟鎹?				console.log('鐢ㄦ埛宸茬櫥鍑猴紝娓呯┖瀹犵墿鏁版嵁');
+				myPets.value = [];
+			}
+		});
+
+		onBeforeUnmount(() => {
+			// 鍦ㄧ粍浠跺嵏杞芥椂娓呯悊璁℃椂鍣?			if (markerScanInterval) {
+				clearInterval(markerScanInterval);
+			}
+		});
+
+		/**
+		 * 娓呯悊棰濆鐨勬爣璁?		 * 鍦ㄥ紑鍙戠幆澧冧腑锛屾垜浠彧闇€瑕佷繚鐣欏綋鍓嶇敤鎴风殑鏍囪
+		 */
+		function cleanupExtraMarkers() {
+			console.log('鎵ц鏍囪娓呯悊...');
+			if (!map.value) return;
+			
+			// 鑾峰彇褰撳墠鍦板浘涓婄殑鎵€鏈夋爣璁?			const allMapMarkers = map.value.getAllOverlays('marker');
+			if (!allMapMarkers || allMapMarkers.length === 0) {
+				console.log('鍦板浘涓婃病鏈夋爣璁帮紝鏃犻渶娓呯悊');
+				return;
+			}
+			
+			console.log(`鍦板浘涓婂叡鏈?${allMapMarkers.length} 涓爣璁癭);
+			
+			// 鑾峰彇褰撳墠鐢ㄦ埛ID
+			const currentUserId = userStore.userInfo?.id || userStore.user?._id;
+			if (!currentUserId) {
+				console.log('鏈壘鍒板綋鍓嶇敤鎴稩D锛岃烦杩囨爣璁版竻鐞?);
+				return;
+			}
+			
+			console.log('褰撳墠鐢ㄦ埛ID:', currentUserId);
+			
+			// 鑾峰彇闇€瑕佷繚鐣欑殑鎵€鏈夋爣璁癐D锛堢敤鎴稩D鍜屽綋鍓嶄綅缃爣璁帮級
+			const validMarkerIds = [currentUserId, 'current-user-location'];
+			
+			// 璁板綍鎵€鏈夋爣璁癐D鐢ㄤ簬璋冭瘯
+			const markerIds = [];
+			allMapMarkers.forEach(marker => {
+				try {
+					const markerUserId = marker?.getExtData?.()?.userId || '鏈煡';
+					markerIds.push(markerUserId);
+				} catch (err) {
+					console.error('鑾峰彇鏍囪ID鍑洪敊:', err);
+				}
+			});
+			console.log('鍦板浘涓婄殑鏍囪ID:', markerIds);
+			
+			// 閬嶅巻鏍囪锛岀Щ闄ら潪褰撳墠鐢ㄦ埛鐨勬爣璁?			const keptMarkers = [];
+			allMapMarkers.forEach(marker => {
+				try {
+					const markerId = marker?.getExtData?.()?.userId;
+					if (!markerId) {
+						console.log('鎵惧埌鏃營D鏍囪锛岀Щ闄?);
+						map.value.remove(marker);
+						return;
+					}
+					
+					// 妫€鏌ユ槸鍚︽槸鏈夋晥鐨勬爣璁癐D
+					if (validMarkerIds.includes(markerId)) {
+						console.log(`淇濈暀鏍囪ID: ${markerId}`);
+						keptMarkers.push(markerId);
+					} else {
+						console.log(`绉婚櫎鏍囪ID: ${markerId}`);
+						map.value.remove(marker);
+						
+						// 鍚屾椂浠巙serMarkers瀵硅薄涓Щ闄?						if (userMarkers[markerId]) {
+							delete userMarkers[markerId];
+						}
+					}
+				} catch (err) {
+					console.error('娓呯悊鏍囪鏃跺嚭閿?', err);
+				}
+			});
+			
+			console.log(`娓呯悊瀹屾垚锛屼繚鐣欐爣璁? ${keptMarkers.join(', ')}`);
+		}
+
+		/**
+		 * 鏄剧ず鐢ㄦ埛瀹犵墿妯℃€佹
+		 * @param {Object} user 鐢ㄦ埛瀵硅薄
+		 */
+		const showUserPetModal = async (user) => {
+		  console.log('鏄剧ず鐢ㄦ埛瀹犵墿妯℃€佹:', user);
+		  
+		  // 鍏堝叧闂凡鎵撳紑鐨勫脊绐?		  showUserPopup.value = false;
+		  
+		  // 澶勭悊鍙兘鐨勯€氱敤鏍囪瘑绗︼紙淇涓哄疄闄呯敤鎴稩D锛?		  let userId = user?._id || user?.id;
+		  
+		  // 濡傛灉ID鏄?current-user-location'涓旂敤鎴峰凡鐧诲綍锛屽垯浣跨敤鐪熷疄鐨勭敤鎴稩D
+		  if (userId === 'current-user-location' && userStore.isAuthenticated) {
+			console.log('灏嗛€氱敤鏍囪瘑绗﹁浆鎹负瀹為檯鐢ㄦ埛ID');
+			userId = userStore.userInfo?.id || userStore.user?._id;
+			// 鍚屾椂鏇存柊user瀵硅薄浠ヤ繚鎸佷竴鑷存€?			user = {...user, id: userId, _id: userId};
+		  }
+		  
+		  // 妫€鏌ョ敤鎴峰璞℃槸鍚︽湁鏁?		  if (!userId) {
+			console.error('鏃犳晥鐨勭敤鎴锋暟鎹?', user);
+			
+			// 鏄剧ず閿欒鎻愮ず
+			uni.showToast({
+			  title: '鏃犳硶鑾峰彇鐢ㄦ埛淇℃伅',
+			  icon: 'none'
+			});
+			return;
+		  }
+		  
+		  try {
+			// 鏄剧ず鍔犺浇鐘舵€?			uni.showLoading({
+			  title: '鍔犺浇涓?..'
+			});
+			
+			// 濡傛灉鏄綋鍓嶇敤鎴凤紝鐩存帴浠巗tore鑾峰彇瀹犵墿鏁版嵁
+			const currentUserId = userStore.user?._id || userStore.userInfo?.id;
+			if (userId === currentUserId) {
+			  console.log('褰撳墠鐢ㄦ埛锛屼粠store鑾峰彇瀹犵墿鏁版嵁');
+			  
+			  // 纭繚petStore涓殑瀹犵墿鏁版嵁宸叉洿鏂?			  if (!petStore.pets || petStore.pets.length === 0) {
+			    console.log('灏濊瘯浠庢湇鍔″櫒鑾峰彇鏈€鏂板疇鐗╂暟鎹?);
+			    await petStore.fetchPets();
+			  }
+			  
+			  // 鍒涘缓甯︽湁瀹犵墿鏁版嵁鐨勭敤鎴峰璞?			  const currentUserWithPets = {
+			    ...(userStore.user || userStore.userInfo || {}),
+			    pets: petStore.pets || [],
+			    isCurrentUser: true // 娣诲姞鏍囪锛岃〃绀鸿繖鏄綋鍓嶇敤鎴?			  };
+			  
+			  console.log('鐢ㄦ埛瀹犵墿鏁版嵁:', petStore.pets);
+			  
+			  selectedUser.value = currentUserWithPets;
+			  selectedUserPets.value = petStore.pets || [];
+			  selectedUserFollowStatus.value = false; // 鑷繁涓嶉渶瑕佸叧娉ㄧ姸鎬?					
+			  // 璁剧疆isFollowing渚涙ā鏉夸娇鐢?			  isFollowing.value = false;
+			  
+			  // 闅愯棌鍔犺浇鐘舵€?			  uni.hideLoading();
+			  
+			  // 鏄剧ず鐢ㄦ埛寮圭獥
+			  showUserPopup.value = true;
+			  return;
+			}
+			
+			// 鏈湴妯℃嫙瀹犵墿鏁版嵁鍜屽叧娉ㄧ姸鎬?			let petsData = [];
+			let followStatus = { following: false };
+			
+			// 濡傛灉鎴戜滑娌℃湁瀹屾暣鐨勭敤鎴蜂俊鎭紝灏濊瘯鑾峰彇瀹?			if (!user.nickname || !user.avatar) {
+			  try {
+				const userResponse = await getUserInfo(userId);
+				if (userResponse && userResponse.data && userResponse.data.user) {
+				  user = userResponse.data.user;
+				  console.log('鎴愬姛鑾峰彇鐢ㄦ埛璇︾粏淇℃伅:', user);
+				}
+			  } catch (userInfoError) {
+				console.warn('鑾峰彇鐢ㄦ埛璇︾粏淇℃伅澶辫触锛屼娇鐢ㄧ幇鏈夋暟鎹?', userInfoError);
+			  }
+			}
+			
+			// 灏濊瘯閫氳繃API鑾峰彇鏁版嵁锛堜絾澶勭悊鍙兘鐨勯敊璇級
+			try {
+			  // 骞惰鑾峰彇瀹犵墿淇℃伅鍜屽叧娉ㄧ姸鎬?			  await Promise.all([
+				// 鑾峰彇瀹犵墿淇℃伅
+				(async () => {
+				  if (locationStore && typeof locationStore.getUserPets === 'function') {
+					try {
+					  const petsResponse = await locationStore.getUserPets(userId);
+					  if (petsResponse && (Array.isArray(petsResponse) || Array.isArray(petsResponse.data))) {
+						petsData = Array.isArray(petsResponse) ? petsResponse : petsResponse.data || [];
+					  }
+					} catch (petError) {
+					  console.warn('鑾峰彇鐢ㄦ埛瀹犵墿鏁版嵁澶辫触:', petError);
+					}
+				  }
+				})(),
+				
+				// 鑾峰彇鍏虫敞鐘舵€?				(async () => {
+				  if (locationStore && typeof locationStore.checkFollowStatus === 'function') {
+					try {
+					  const followResponse = await locationStore.checkFollowStatus(userId);
+					  if (followResponse && typeof followResponse.following === 'boolean') {
+						followStatus = followResponse;
+					  }
+					} catch (followError) {
+					  console.warn('鑾峰彇鍏虫敞鐘舵€佸け璐?', followError);
+					}
+				  }
+				})()
+			  ]);
+			} catch (apiError) {
+			  console.warn('API璋冪敤澶辫触锛屼娇鐢ㄦ湰鍦版暟鎹?', apiError);
+			}
+			
+			// 鏇存柊閫変腑鐨勭敤鎴峰拰瀹犵墿
+			// 鍒涘缓鍖呭惈瀹犵墿鏁版嵁鐨勭敤鎴峰璞?			const userWithPets = {
+			  ...user,
+			  pets: petsData,
+			  isCurrentUser: false
+			};
+			
+			selectedUser.value = userWithPets;
+			selectedUserPets.value = petsData;
+			selectedUserFollowStatus.value = followStatus.following;
+			
+			// 璁剧疆isFollowing渚涙ā鏉夸娇鐢?			isFollowing.value = selectedUserFollowStatus.value;
+			
+			// 闅愯棌鍔犺浇鐘舵€?			uni.hideLoading();
+			
+			// 鏄剧ず鐢ㄦ埛寮圭獥
+			showUserPopup.value = true;
+			
+			// 娣诲姞璋冭瘯淇℃伅
+			console.log('鏄剧ず寮圭獥淇℃伅:', {
+			  鐢ㄦ埛: selectedUser.value,
+			  瀹犵墿鍒楄〃: selectedUserPets.value,
+			  鐢ㄦ埛瀹犵墿灞炴€? selectedUser.value.pets
+			});
+		  } catch (error) {
+			console.error('鑾峰彇鐢ㄦ埛瀹犵墿鏁版嵁澶辫触:', error);
+			
+			// 闅愯棌鍔犺浇鐘舵€?			uni.hideLoading();
+			
+			// 鏄剧ず閿欒鎻愮ず
+			uni.showToast({
+			  title: '鑾峰彇鐢ㄦ埛淇℃伅澶辫触',
+			  icon: 'none'
+			});
+		  }
+		};
+
+		/**
+		 * 鍏抽棴鐢ㄦ埛寮圭獥
+		 */
+		function closeUserPopup() {
+			console.log('鍏抽棴鐢ㄦ埛寮圭獥');
+			showUserPopup.value = false;
+			selectedUser.value = null;
+			selectedUserPets.value = [];
+		}
+
+		/**
+		 * 闅愯棌鐢ㄦ埛寮圭獥鐨勫嚱鏁?		 */
+		function hideUserPopup() {
+			console.log('闅愯棌鐢ㄦ埛寮圭獥');
+			showUserPopup.value = false;
+		}
+
+		/**
+		 * 鑾峰彇鐢ㄦ埛淇℃伅
+		 * @param {String|Number} userId 鐢ㄦ埛ID
+		 * @returns {Promise} 鍖呭惈鐢ㄦ埛淇℃伅鐨凱romise
+		 */
+		const getUserInfo = async (userId) => {
+			// 鑾峰彇鍩虹API URL
+			const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+			
+			try {
+				const res = await new Promise((resolve, reject) => {
+					uni.request({
+						url: `${baseUrl}/api/users/${userId}`,
+						method: 'GET',
+						header: {
+							'Authorization': `Bearer ${userStore.token}`
+						},
+						success: (res) => {
+							console.log('鑾峰彇鐢ㄦ埛淇℃伅鍝嶅簲:', res);
+							resolve(res);
+						},
+						fail: (err) => {
+							console.error('璇锋眰鐢ㄦ埛淇℃伅澶辫触:', err);
+							reject(err);
+						}
+					});
+				});
+				
+				if (res.statusCode === 200 && res.data) {
+					return res;
+				} else if (res.statusCode === 401) {
+					console.error('鏈璇侊紝鍙兘闇€瑕佺櫥褰?);
+					uni.showToast({
+						title: '璇峰厛鐧诲綍',
+						icon: 'none'
+					});
+					throw new Error('鏈璇? 璇峰厛鐧诲綍');
+				} else {
+					console.error('鑾峰彇鐢ㄦ埛淇℃伅澶辫触:', res);
+					throw new Error('鑾峰彇鐢ㄦ埛淇℃伅澶辫触: ' + (res.data?.message || '鏈煡閿欒'));
+				}
+			} catch (err) {
+				console.error('鑾峰彇鐢ㄦ埛淇℃伅杩囩▼涓彂鐢熼敊璇?', err);
+				throw err;
+			}
+		}
+
+		// 閫変腑鐢ㄦ埛鏍囪鏃舵樉绀哄脊绐?		const selectUserMarker = async (userId) => {
+		  console.log('閫変腑鐢ㄦ埛鏍囪:', userId);
+		  
+		  try {
+			let user;
+			let pets = [];
+			
+			// 鍒ゆ柇鏄惁鏄嚜宸辩殑ID
+			if (userId === userStore.userId) {
+			  user = {
+				...userStore.user,
+				isCurrentUser: true
+			  };
+			  
+			  // 鑾峰彇鑷繁鐨勫疇鐗?			  pets = petStore.pets || [];
+			} else {
+			  // 鑾峰彇鍏朵粬鐢ㄦ埛淇℃伅
+			  user = await api.user.getUserById(userId);
+			  if (user) {
+				user = {
+				  ...user,
+				  isCurrentUser: false
+				};
+				
+				// 鑾峰彇璇ョ敤鎴风殑瀹犵墿
+				try {
+				  pets = await api.pet.getPetsByUser(userId);
+				} catch (error) {
+				  console.error('鑾峰彇鐢ㄦ埛瀹犵墿澶辫触:', error);
+				  pets = [];
+				}
+				
+				// 妫€鏌ユ槸鍚﹀凡鍏虫敞璇ョ敤鎴?				try {
+				  if (userStore.isAuthenticated) {
+					const currentUserInfo = await userStore.fetchUserInfo();
+					isFollowing.value = currentUserInfo.following && 
+					  currentUserInfo.following.some(followingId => 
+						followingId === userId || (followingId._id && followingId._id === userId)
+					  );
+				  }
+				} catch (error) {
+				  console.error('妫€鏌ュ叧娉ㄧ姸鎬佸け璐?', error);
+				  isFollowing.value = false;
+				}
+			  } else {
+				console.error('鏈壘鍒扮敤鎴蜂俊鎭?);
+				return;
+			  }
+			}
+			
+			// 鏇存柊鐘舵€?			selectedUser.value = user;
+			selectedUserPets.value = pets;
+			
+			// 鏄剧ず寮圭獥
+			showUserPopup.value = true;
+		  } catch (error) {
+			console.error('鑾峰彇鐢ㄦ埛淇℃伅澶辫触:', error);
+		  }
+		};
+
+		// 杩斿洖鍚勪釜鍙橀噺鍜屽嚱鏁颁緵妯℃澘浣跨敤
+		return {
+			userStore,
+			petStore,
+			mapScale,
+			currentLocation,
+			markers,
+			allMarkers,
+			nearbyUsers,
+			isWalking,
+			walkingPath,
+			walkingDistance,
+			walkingDuration,
+			showUserPopup,
+			selectedUser,
+			selectedUserPets,
+			selectedUserFollowStatus,
+			isFollowing,
+			showWalkSummary,
+			walkShareContent,
+			myPets,
+			myPetsNames,
+			selectedPetIndex,
+			showDebug,
+			debugInfo,
+			showLocationSharingTip,
+			isLocationShared,
+			userAvatar,
+			userHeading,
+			defaultAvatarBase64,
+			userMarker,
+			locationSharingStatusVisible,
+			locationSharingStatus,
+			
+			// 鍑芥暟
+			formatDuration,
+			calculatePace,
+			forceRefreshMarker,
+			toggleMarker,
+			toggleWalkingMode,
+			confirmLocationSharing,
+			cancelLocationSharing,
+			saveWalkRecord, // 娣诲姞淇濆瓨閬涚嫍璁板綍鍑芥暟
+			
+			// 娣诲姞缂哄け鐨勪簨浠跺鐞嗗嚱鏁?			onMarkerTap,
+			onMapTap,
+			onMapRegionChange,
+			onMapUpdated,
+			hideUserPopup, // 鏆撮湶鏂板嚱鏁扮粰妯℃澘
+			
+			// 鍏朵粬宸叉湁鍑芥暟
+			centerOnUser() {
+				console.log('瀹氫綅鍒扮敤鎴蜂綅缃?);
+				try {
+					// 鑾峰彇鍦板浘瀹炰緥
+					map.value = getMapInstance();
+					
+					// 妫€鏌ヤ綅缃俊鎭槸鍚︽湁鏁?					if (!currentLocation.value || typeof currentLocation.value.latitude === 'undefined') {
+						console.warn('褰撳墠浣嶇疆淇℃伅涓嶅彲鐢紝鏃犳硶瀹氫綅');
+						uni.showToast({
+							title: '鏃犳硶鑾峰彇浣嶇疆淇℃伅',
+							icon: 'none'
+						});
+						return;
+					}
+					
+					// 璁剧疆鍦板浘涓績鐐瑰埌鐢ㄦ埛浣嶇疆
+					const pos = [currentLocation.value.longitude, currentLocation.value.latitude];
+					console.log('璁剧疆鍦板浘涓績鍒?', pos);
+					map.value.setCenter(pos);
+					map.value.setZoom(16); // 鍚屾椂璁剧疆閫傚綋鐨勭缉鏀剧骇鍒?					
+					// 鏄剧ず鎴愬姛鎻愮ず
+					uni.showToast({
+						title: '宸插畾浣嶅埌褰撳墠浣嶇疆',
+						icon: 'none',
+						duration: 1000
+					});
+				} catch (e) {
+					console.error('璁剧疆鍦板浘涓績鐐瑰嚭閿?', e);
+					uni.showToast({
+						title: '瀹氫綅澶辫触锛岃閲嶈瘯',
+						icon: 'none'
+					});
+				}
+			},
+			zoomIn() {
+				console.log('鏀惧ぇ鍦板浘');
+				try {
+					// 鑾峰彇鍦板浘瀹炰緥
+					map.value = getMapInstance();
+					
+					// 鑾峰彇褰撳墠缂╂斁绾у埆
+					const currentZoom = map.value.getZoom();
+					console.log('褰撳墠缂╂斁绾у埆:', currentZoom);
+					
+					// 澧炲姞缂╂斁绾у埆锛岀‘淇濅笉瓒呰繃鏈€澶у€?閫氬父鏄?8鎴?9)
+					const newZoom = Math.min(currentZoom + 1, 19);
+					console.log('鏂扮缉鏀剧骇鍒?', newZoom);
+					
+					// 璁剧疆鏂扮殑缂╂斁绾у埆
+					map.value.setZoom(newZoom);
+					
+					// 鏄剧ず鎴愬姛鎻愮ず
+					uni.showToast({
+						title: '宸叉斁澶у湴鍥?,
+						icon: 'none',
+						duration: 500
+					});
+				} catch (e) {
+					console.error('鍦板浘鏀惧ぇ鍑洪敊:', e);
+					uni.showToast({
+						title: '鎿嶄綔澶辫触锛岃閲嶈瘯',
+						icon: 'none'
+					});
+				}
+			},
+			zoomOut() {
+				console.log('缂╁皬鍦板浘');
+				try {
+					// 鑾峰彇鍦板浘瀹炰緥
+					map.value = getMapInstance();
+					
+					// 鑾峰彇褰撳墠缂╂斁绾у埆
+					const currentZoom = map.value.getZoom();
+					console.log('褰撳墠缂╂斁绾у埆:', currentZoom);
+					
+					// 鍑忓皯缂╂斁绾у埆锛岀‘淇濅笉浣庝簬鏈€灏忓€?閫氬父鏄?鎴?)
+					const newZoom = Math.max(currentZoom - 1, 3);
+					console.log('鏂扮缉鏀剧骇鍒?', newZoom);
+					
+					// 璁剧疆鏂扮殑缂╂斁绾у埆
+					map.value.setZoom(newZoom);
+					
+					// 鏄剧ず鎴愬姛鎻愮ず
+					uni.showToast({
+						title: '宸茬缉灏忓湴鍥?,
+						icon: 'none',
+						duration: 500
+					});
+				} catch (e) {
+					console.error('鍦板浘缂╁皬鍑洪敊:', e);
+					uni.showToast({
+						title: '鎿嶄綔澶辫触锛岃閲嶈瘯',
+						icon: 'none'
+					});
+				}
+			},
+			closeUserPopup,
+			messageUser(userId) {
+				// 瀹炵幇鍙戦€佹秷鎭姛鑳?				uni.navigateTo({
+					url: `/pages/profile/message?userId=${userId}`
+				});
+			},
+			followUser(userId) {
+				// 瀹炵幇鍏虫敞鐢ㄦ埛鍔熻兘
+				isFollowing.value = !isFollowing.value;
+				// 杩欓噷搴旇璋冪敤API鏇存柊鍏虫敞鐘舵€?			},
+			closeWalkSummary() {
+				console.log('鍏抽棴姝ヨ鎽樿');
+				showWalkSummary.value = false;
+			},
+			shareWalkRecord(shareData) {
+				console.log('鍒嗕韩閬涚嫍璁板綍鍒扮ぞ鍖?, shareData);
+				
+				// 鑾峰彇閫変腑鐨勫疇鐗?				const selectedPet = shareData && shareData.selectedPetIndex >= 0 && myPets.value.length > shareData.selectedPetIndex
+					? myPets.value[shareData.selectedPetIndex]
+					: null;
+				
+				// 鍑嗗鍒嗕韩鍐呭
+				const petName = selectedPet ? selectedPet.name : '鎴戠殑瀹犵墿';
+				const distance = (walkingDistance.value / 1000).toFixed(2);
+				const duration = formatDuration(walkingDuration.value);
+				
+				// 榛樿鍒嗕韩鍐呭
+				let content = `鎴戝拰${petName}涓€璧烽仜浜?{distance}鍏噷锛岀敤鏃?{duration}锛乣;
+				
+				// 濡傛灉鐢ㄦ埛杈撳叆浜嗗垎浜唴瀹癸紝鍒欓檮鍔犱笂鐢ㄦ埛鐨勫唴瀹?				if (shareData && shareData.content) {
+					content += '\n\n' + shareData.content;
+				}
+				
+				// 鍏抽棴鎽樿寮圭獥
+				showWalkSummary.value = false;
+				
+				// 棣栧厛淇濆瓨閬涚嫍璁板綍
+				saveWalkRecord().then(walkId => {
+					console.log('宸蹭繚瀛橀仜鐙楄褰曪紝鍑嗗鍒嗕韩鍒扮ぞ鍖猴紝璁板綍ID:', walkId);
+					
+					// 鑾峰彇瀹屾暣鐨勯仜鐙楄褰曟暟鎹?					const walkRecordData = {
+						_id: walkId,
+						distance: walkingDistance.value,
+						duration: walkingDuration.value,
+						startTime: walkStartTime.value,
+						routeSnapshot: currentRouteSnapshot.value, // 娣诲姞璺嚎蹇収
+						pet: selectedPet 
+							? { 
+								_id: selectedPet._id, 
+								name: selectedPet.name, 
+								avatar: selectedPet.avatar 
+							} 
+							: null
+					};
+					
+					// 寤惰繜鍚庤烦杞埌绀惧尯鍙戝笘椤甸潰
+					setTimeout(() => {
+						// 瀵艰埅鍒板彂甯栭〉闈?						uni.navigateTo({
+							url: '/pages/community/create',
+							success: (page) => {
+								// 閫氳繃浜嬩欢閫氶亾浼犻€掗濉唴瀹?								uni.$emit('createPost', {
+									content: content,
+									walkRecord: walkRecordData
+								});
+								
+								// 鏄剧ず鎻愮ず
+								uni.showToast({
+									title: '姝ｅ湪鍓嶅線绀惧尯',
+									icon: 'none',
+									duration: 1500
+								});
+							},
+							fail: (err) => {
+								console.error('瀵艰埅鍒扮ぞ鍖哄彂甯栭〉闈㈠け璐?', err);
+								uni.showToast({
+									title: '鎵撳紑绀惧尯椤甸潰澶辫触',
+									icon: 'none'
+								});
+							}
+						});
+					}, 300);
+				}).catch(error => {
+					console.error('淇濆瓨閬涚嫍璁板綍澶辫触锛屾棤娉曞垎浜埌绀惧尯:', error);
+					uni.showToast({
+						title: '鍒嗕韩澶辫触锛岃閲嶈瘯',
+						icon: 'none'
+					});
+				});
+			},
+			reloadUserInfo,
+			clearAvatarCache,
+			onMapContainerClick,
+			selectUserMarker,
+			// 杩欓噷娣诲姞onShow鍜宱nHide澹版槑鍛ㄦ湡閽╁瓙
+			onShow,
+			onHide
+		};
+	}
+}
+</script>
+
+<style lang="scss">
+.map-container {
+	position: relative;
+	width: 100%;
+	height: 100vh;
+	overflow: hidden;
+}
+
+.map {
+	width: 100%;
+	height: 100%;
+}
+
+.debug-info {
+	position: absolute;
+	top: 10px;
+	left: 10px;
+	background: rgba(0, 0, 0, 0.7);
+	color: white;
+	padding: 10px;
+	border-radius: 5px;
+	font-size: 12px;
+	z-index: 999;
+	max-width: 80%;
+	max-height: 80%;
+	overflow-y: auto;
+	
+	text {
+		display: block;
+		margin-bottom: 5px;
+		word-break: break-all;
+	}
+	
+	button {
+		margin-top: 10px;
+		padding: 5px;
+		background: #007AFF;
+		color: white;
+		border: none;
+		border-radius: 3px;
+	}
+}
+
+.toolbar {
+	position: absolute;
+	top: 20px;
+	right: 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	z-index: 10;
+}
+
+.toolbar-item {
+	width: 40px;
+	height: 40px;
+	background-color: white;
+	border-radius: 20px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+	
+	.icon {
+		font-size: 14px;
+	}
+	
+	.toolbar-text {
+		font-size: 10px;
+		margin-top: 0px;
+	}
+}
+
+.start-button {
+	position: absolute;
+	bottom: 150px; /* Increased from 90px to 150px to move it higher */
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 10;
+	
+	.start-button-inner {
+		width: 120px;
+		height: 50px;
+		background-color: #007AFF;
+		border-radius: 25px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+		
+		&.active {
+			background-color: #FF3B30;
+		}
+		
+		.start-icon {
+			font-size: 20px;
+			margin-right: 5px;
+			color: white;
+		}
+		
+		.start-text {
+			color: white;
+			font-size: 16px;
+			font-weight: bold;
+		}
+	}
+}
+
+.walking-info {
+	position: absolute;
+	top: 20px;
+	left: 50%;
+	transform: translateX(-50%);
+	background-color: rgba(255, 255, 255, 0.9);
+	border-radius: 10px;
+	padding: 10px 20px;
+	display: flex;
+	gap: 20px;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+	z-index: 10;
+	
+	.info-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		
+		.label {
+			font-size: 12px;
+			color: #666;
+		}
+		
+		.value {
+			font-size: 16px;
+			font-weight: bold;
+			color: #333;
+		}
+	}
+}
+
+.location-share-tip {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	background-color: white;
+	border-radius: 15px;
+	padding: 20px;
+	box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+	z-index: 100;
+	width: 80%;
+	max-width: 300px;
+	
+	.tip-content {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		
+		.tip-text {
+			font-size: 16px;
+			text-align: center;
+			margin-bottom: 20px;
+			color: #333;
+		}
+		
+		.tip-buttons {
+			display: flex;
+			width: 100%;
+			gap: 10px;
+			
+			.tip-btn {
+				flex: 1;
+				padding: 10px;
+				border-radius: 8px;
+				text-align: center;
+				font-size: 14px;
+				font-weight: bold;
+				
+				&.cancel-btn {
+					background-color: #F1F1F1;
+					color: #666;
+				}
+				
+				&.confirm-btn {
+					background-color: #007AFF;
+					color: white;
+				}
+			}
+		}
+	}
+}
+
+/* 鑷畾涔夊湴鍥炬爣璁版牱寮?*/
+:deep(.map) {
+	::v-deep .amap-marker-content img {
+		border-radius: 50%;
+		border: 3px solid #007AFF;
+		box-shadow: 0 0 10px rgba(0, 122, 255, 0.6);
+	}
+    
+    .uni-map-marker, .uni-map-marker-content {
+        border-radius: 50% !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    }
+    
+    .uni-map-marker img, .uni-map-marker-content img {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
+        border-radius: 50% !important;
+        overflow: hidden !important;
+    }
+    
+    /* 鐐瑰嚮鏁堟灉 */
+    .uni-map-marker:active, .uni-map-marker.active {
+        transform: scale(1.1) !important;
+        transition: transform 0.2s !important;
+    }
+}
+
+/* 璁剧疆鐢ㄦ埛鏍囪鏍峰紡 */
+.user-marker {
+	width: 44px;
+	height: 44px;
+	border-radius: 50%;
+	border: 3px solid #007AFF;
+	background-color: white;
+	box-shadow: 0 4px 12px rgba(0, 122, 255, 0.4);
+	overflow: hidden;
+	
+	img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+}
+
+/* 浣嶇疆鍏变韩鐘舵€佹寚绀哄櫒 */
+.location-sharing-status {
+	position: absolute;
+	top: 20px;
+	left: 50%;
+	transform: translateX(-50%);
+	background-color: rgba(255, 255, 255, 0.9);
+	border-radius: 10px;
+	padding: 10px;
+	display: flex;
+	gap: 10px;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+	z-index: 10;
+	
+	.status-icon {
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		background-color: #007AFF;
+		
+		&.active {
+			background-color: #FF3B30;
+		}
+	}
+	
+	.status-text {
+		font-size: 16px;
+		font-weight: bold;
+		color: #333;
+	}
+}
+
+/* 浼樺寲鍦板浘鏍囪鏍峰紡 - 澧炲己鍦嗗舰鏁堟灉 */
+:deep(.map) {
+    /* 鍚屾椂閫夋嫨澶氱鍙兘鐨勬爣璁板厓绱犱互纭繚鏍峰紡鐢熸晥 */
+    .amap-marker-content img, 
+    .uni-map-marker img, 
+    .uni-map-marker-content img,
+    .uni-map .uni-map-cover-image {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
+        border-radius: 50% !important;
+        border: 3px solid #007AFF !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    }
+    
+    /* 纭繚鏍囪瀹瑰櫒涔熸槸鍦嗗舰 */
+    .amap-marker-content, 
+    .uni-map-marker, 
+    .uni-map-marker-content,
+    .uni-map .uni-map-cover-image {
+        border-radius: 50% !important;
+        overflow: hidden !important;
+        background-color: white !important;
+    }
+    
+    /* 鐐瑰嚮鏁堟灉 */
+    .amap-marker-content:active,
+    .uni-map-marker:active, 
+    .uni-map-marker-content:active,
+    .uni-map-cover-image:active,
+    .amap-marker-content.active,
+    .uni-map-marker.active, 
+    .uni-map-marker-content.active,
+    .uni-map-cover-image.active {
+        transform: scale(1.1) !important;
+        transition: transform 0.2s !important;
+    }
+}
+
+/* 娣诲姞棰濆鐨勫叏灞€鏍峰紡浠ョ‘淇濊鐩栧師濮嬫牱寮?*/
+.user-marker-circle {
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    background-color: white !important;
+    border: 3px solid #007AFF !important;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.4) !important;
+}
+
+/* 浼樺寲鍦板浘鏍囪鏍峰紡 - 缁熶竴鎵€鏈夊彲鑳界殑閫夋嫨鍣?*/
+:deep(.map) {
+    .amap-marker-content img, 
+    .uni-map-marker img, 
+    .uni-map-marker-content img,
+    .uni-map-cover-image,
+    .uni-map-cover-view img {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
+        border-radius: 50% !important;
+        border: 3px solid #007AFF !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    }
+    
+    /* 纭繚鏍囪瀹瑰櫒涔熸槸鍦嗗舰 */
+    .amap-marker-content, 
+    .uni-map-marker, 
+    .uni-map-marker-content,
+    .uni-map-cover-image,
+    .uni-map-cover-view {
+        border-radius: 50% !important;
+        overflow: hidden !important;
+        background-color: white !important;
+    }
+}
+
+/* 娣诲姞寮哄埗鏍峰紡锛岀‘淇濆渾褰㈡樉绀?*/
+.custom-marker-class {
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    border: 3px solid #007AFF !important;
+    background-color: white !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* 鐩存帴淇敼鍥剧墖鍏冪礌鏍峰紡 */
+img.marker-image {
+    border-radius: 50% !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+}
+
+.map-wrapper {
+	position: relative;
+	width: 100%;
+	height: 100vh;
+}
+
+.map-container {
+	width: 100%;
+	height: 100%;
+}
+
+.map-overlay {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none; /* 鍏佽鐐瑰嚮绌块€忓埌涓嬪眰鍏冪礌 */
+	z-index: 5;
+}
+
+
+<style>
+/* 鐩存帴淇amap鏍囪鍏冪礌鏍峰紡 */
+.amap-marker .amap-icon,
+.amap-marker .amap-icon img {
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    background-color: white !important;
+    border: 3px solid #007AFF !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+.amap-marker .amap-icon img {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+}
+
+/* 纭繚鐐瑰嚮浜嬩欢鑳藉姝ｅ父浼犻€?*/
+.amap-marker {
+    cursor: pointer !important;
+    pointer-events: auto !important;
+}
+
+.map-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+}
+
+.map-container {
+    width: 100%;
+    height: 100%;
+}
+
+/* 浣挎爣璁板彲鐐瑰嚮 */
+.amap-markers .amap-marker {
+    cursor: pointer !important;
+    pointer-events: auto !important;
+}
+
+
+/**
+ * 娴嬭瘯鐢ㄦ埛寮圭獥 - 鍦ㄦ壘涓嶅埌鐢ㄦ埛淇℃伅鏃舵樉绀哄熀鏈殑娴嬭瘯淇℃伅
+ * @param {String} userId 鐢ㄦ埛ID
+ */
+function testUserPopup(userId) {
+	console.log('娴嬭瘯鐢ㄦ埛寮圭獥');
+	
+	if (!userId) {
+		console.log(' 鏈壘鍒扮敤鎴稩D锛屾棤娉曟祴璇曞脊绐?);
+		return;
+	}
+	
+	// 鍒涘缓涓存椂鐢ㄦ埛淇℃伅
+	const tempUser = {
+		id: userId,
+		_id: userId,
+		nickname: `鐢ㄦ埛${userId.substr(0, 6)}...`,
+		username: `鐢ㄦ埛${userId.substr(0, 6)}...`,
+		avatar: '/static/images/default-avatar.png',
+	};
+	
+	// 璁剧疆涓存椂瀹犵墿淇℃伅
+	const tempPets = [{
+		id: 'temp-pet',
+		name: '涓存椂瀹犵墿',
+		breed: '鏈煡鍝佺',
+		gender: 'unknown',
+		age: 0,
+		avatar: '/static/images/default-pet.png'
+	}];
+	
+	// 璁剧疆寮圭獥鏁版嵁
+	selectedUser.value = tempUser;
+	selectedUserPets.value = tempPets;
+	isFollowing.value = false;
+	
+	// 鏄剧ず寮圭獥
+	showUserPopup.value = true;
+	
+	console.log('宸叉樉绀烘祴璇曠敤鎴峰脊绐楋紝鐢ㄦ埛ID:', userId);
+}
+
+// 娣诲姞onShow鐢熷懡鍛ㄦ湡閽╁瓙
+const onShow = () => {
+	console.log('鍦板浘椤甸潰 onShow 瑙﹀彂');
+	
+	// 妫€鏌ュ湴鍥惧疄渚嬫槸鍚︽湁鏁?	if (!map.value && typeof window !== 'undefined') {
+		console.log('椤甸潰閲嶆柊鏄剧ず锛屾鏌ュ湴鍥惧疄渚?);
+		
+		// 灏濊瘯浠庡叏灞€鍙橀噺鎭㈠鍦板浘瀹炰緥
+		if (window.__dogRunMapInstance) {
+			console.log('浠庡叏灞€鍙橀噺鎭㈠鍦板浘瀹炰緥');
+			map.value = window.__dogRunMapInstance;
+			
+			// 鎭㈠鍚庡埛鏂板湴鍥?			try {
+				map.value.resize();
+				// 纭繚鐢ㄦ埛鏍囪瀛樺湪
+				if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+					toggleMarker();
+				}
+			} catch (e) {
+				console.error('鎭㈠鍏ㄥ眬鍦板浘瀹炰緥鍚庡埛鏂板け璐?', e);
+			}
+		} else {
+			console.log('鍏ㄥ眬鍙橀噺涓棤鍦板浘瀹炰緥锛屽皾璇曢噸鏂板垵濮嬪寲');
+			
+			// 寤惰繜鎵ц浠ョ‘淇滵OM宸茬粡娓叉煋
+			setTimeout(() => {
+				const mapContainer = document.getElementById('map-container');
+				if (mapContainer) {
+					// 妫€鏌ュ鍣ㄦ槸鍚﹀凡鏈夊湴鍥惧疄渚?					if (mapContainer.__amap_instance__) {
+						console.log('浠嶥OM鍏冪礌鎭㈠鍦板浘瀹炰緥');
+						map.value = mapContainer.__amap_instance__;
+						
+						// 鎭㈠鍚庡埛鏂板湴鍥?						try {
+							map.value.resize();
+							// 纭繚鐢ㄦ埛鏍囪瀛樺湪
+							if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+								toggleMarker();
+							}
+						} catch (e) {
+							console.error('鎭㈠DOM鍦板浘瀹炰緥鍚庡埛鏂板け璐?', e);
+						}
+					} else if (typeof window.AMap !== 'undefined') {
+						// 閲嶆柊鍒濆鍖栧湴鍥?						console.log('閲嶆柊鍒濆鍖栧湴鍥?);
+						try {
+							map.value = new window.AMap.Map('map-container', {
+								zoom: 15,
+								center: [currentLocation.value.longitude, currentLocation.value.latitude],
+								resizeEnable: true
+							});
+							
+							window.__dogRunMapInstance = map.value;
+							mapContainer.__amap_instance__ = map.value;
+							
+							// 鍦板浘鍔犺浇瀹屾垚鍚庡垱寤虹敤鎴锋爣璁?							map.value.on('complete', () => {
+								console.log('閲嶆柊鍒濆鍖栫殑鍦板浘鍔犺浇瀹屾垚');
+								// 娣诲姞鐢ㄦ埛鏍囪
+								if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+									toggleMarker();
+								}
+							});
+						} catch (err) {
+							console.error('閲嶆柊鍒濆鍖栧湴鍥惧け璐?', err);
+						}
+					} else {
+						// AMap鏈姞杞斤紝闇€瑕侀噸鏂板姞杞借剼鏈?						console.log('AMap鏈姞杞斤紝闇€瑕侀噸鏂板姞杞藉湴鍥捐剼鏈?);
+						const script = document.createElement('script');
+						const amapKey = import.meta.env.VITE_AMAP_KEY || '36b5c28cb6ddb8426b802b4d88068afa';
+						script.src = `https://webapi.amap.com/maps?v=2.0&key=${amapKey}`;
+						script.async = true;
+						
+						script.onload = () => {
+							console.log('鍦板浘鑴氭湰閲嶆柊鍔犺浇瀹屾垚');
+							if (typeof window.AMap !== 'undefined') {
+								// 閲嶆柊鍒濆鍖栧湴鍥?								const mapOptions = {
+									zoom: 15,
+									center: [currentLocation.value.longitude, currentLocation.value.latitude],
+									resizeEnable: true
+								};
+								
+								try {
+									map.value = new window.AMap.Map('map-container', mapOptions);
+									// 淇濆瓨鍒板叏灞€瀵硅薄
+									window.__dogRunMapInstance = map.value;
+									mapContainer.__amap_instance__ = map.value;
+									
+									// 鍦板浘鍔犺浇瀹屾垚鍚庡啀鍒涘缓鐢ㄦ埛鏍囪
+									map.value.on('complete', () => {
+										console.log('閲嶆柊鍔犺浇鐨勫湴鍥惧凡瀹屾垚鍒濆鍖?);
+										if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+											toggleMarker();
+										}
+									});
+								} catch (e) {
+									console.error('閲嶆柊鍔犺浇鍚庡垵濮嬪寲鍦板浘澶辫触:', e);
+								}
+							} else {
+								console.error('鑴氭湰鍔犺浇瀹屾垚锛屼絾AMap瀵硅薄浠嶇劧鏈畾涔?);
+							}
+						};
+						
+						script.onerror = (error) => {
+							console.error('閲嶆柊鍔犺浇楂樺痉鍦板浘鑴氭湰澶辫触:', error);
+						};
+						
+						document.head.appendChild(script);
+					}
+				} else {
+					console.error('鏃犳硶鎵惧埌鍦板浘瀹瑰櫒鍏冪礌');
+				}
+			}, 300);
+		}
+	} else if (map.value) {
+		// 鍦板浘瀹炰緥瀛樺湪锛屽埛鏂板湴鍥句互鎭㈠鏄剧ず
+		console.log('鍦板浘瀹炰緥瀛樺湪锛屽埛鏂颁互鎭㈠鏄剧ず');
+		try {
+			// 瑙﹀彂鍦板浘閲嶇粯
+			map.value.resize();
+			
+			// 鎭㈠涔嬪墠淇濆瓨鐨勫湴鍥剧姸鎬?涓績鐐瑰拰缂╂斁绾у埆)
+			try {
+				if (typeof uni !== 'undefined' && uni.getStorageSync) {
+					const savedCenter = uni.getStorageSync('map_last_center');
+					const savedZoom = uni.getStorageSync('map_last_zoom');
+					
+					if (savedCenter) {
+						const centerObj = JSON.parse(savedCenter);
+						console.log('鎭㈠鍦板浘涓績鐐?', centerObj);
+						map.value.setCenter([centerObj.lng, centerObj.lat]);
+					}
+					
+					if (savedZoom) {
+						console.log('鎭㈠鍦板浘缂╂斁绾у埆:', savedZoom);
+						map.value.setZoom(savedZoom);
+					}
+				}
+			} catch (stateError) {
+				console.error('鎭㈠鍦板浘鐘舵€佸け璐?', stateError);
+			}
+			
+			// 纭繚鐢ㄦ埛鏍囪瀛樺湪
+			if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+				// 妫€鏌ユ槸鍚﹂渶瑕佸埛鏂版爣璁?				const userId = userStore.userInfo?.id || 'current-user-location';
+				if (!userMarkers[userId]) {
+					console.log('鐢ㄦ埛鏍囪涓嶅瓨鍦紝閲嶆柊鍒涘缓');
+					toggleMarker();
+				}
+			}
+			
+			// 娓呯悊鍙兘瀛樺湪鐨勫浣欐爣璁?			setTimeout(() => {
+				cleanupExtraMarkers();
+			}, 500);
+		} catch (e) {
+			console.error('鍒锋柊鍦板浘鏃跺嚭閿?', e);
+			
+			// 濡傛灉鍒锋柊澶辫触锛屽皾璇曢噸鏂板垵濮嬪寲鍦板浘
+			console.log('鍒锋柊澶辫触锛屽皾璇曢噸缃湴鍥惧疄渚?);
+			map.value = null;
+			window.__dogRunMapInstance = null;
+			
+			// 寤惰繜鍚庨噸鏂拌Е鍙憃nShow閫昏緫
+			setTimeout(onShow, 500);
+		}
+	}
+	
+	// 鎭㈠浣嶇疆鏇存柊鍜岄檮杩戠敤鎴锋洿鏂?	if (!locationUpdateInterval.value) {
+		startLocationWatch();
+	}
+	
+	// 鑾峰彇闄勮繎鐢ㄦ埛
+	getNearbyUsers();
+
+	// 鎵ц鍦板浘鍋ュ悍妫€鏌?	ensureMapHealthy();
+};
+
+// 娣诲姞onHide鐢熷懡鍛ㄦ湡閽╁瓙
+const onHide = () => {
+	console.log('鍦板浘椤甸潰 onHide 瑙﹀彂');
+	
+	// 淇濆瓨褰撳墠鍦板浘鐘舵€侊紝浠ヤ究鎭㈠
+	if (map.value) {
+		console.log('淇濆瓨鍦板浘鐘舵€?);
+		// 淇濆瓨鍦板浘涓績鐐瑰拰缂╂斁绾у埆
+		if (typeof uni !== 'undefined' && uni.setStorageSync) {
+			try {
+				const center = map.value.getCenter();
+				const zoom = map.value.getZoom();
+				uni.setStorageSync('map_last_center', JSON.stringify({
+					lng: center.lng,
+					lat: center.lat
+				}));
+				uni.setStorageSync('map_last_zoom', zoom);
+				console.log('鍦板浘鐘舵€佸凡淇濆瓨:', { center: center, zoom: zoom });
+			} catch (e) {
+				console.error('淇濆瓨鍦板浘鐘舵€佸け璐?', e);
+			}
+		}
+	}
+	
+	// 涓嶈娓呴櫎鍦板浘瀹炰緥锛屼繚鐣欏疄渚嬩互渚垮揩閫熸仮澶?	// 浣嗘槸鍙互鏆傚仠涓嶅繀瑕佺殑鏇存柊浠ヨ妭鐪佽祫婧?	if (nearbyUsersUpdateInterval.value) {
+		clearInterval(nearbyUsersUpdateInterval.value);
+		nearbyUsersUpdateInterval.value = null;
+	}
+};
+
+// 娣诲姞涓€涓嚱鏁版潵澶勭悊鍦板浘鎭㈠鍚庣殑鍋ュ悍妫€鏌?function ensureMapHealthy() {
+  console.log('鎵ц鍦板浘鍋ュ悍妫€鏌?..');
+  
+  // 瀹氭湡妫€鏌ュ湴鍥炬槸鍚﹀仴搴凤紝濡傛灉涓嶅仴搴峰垯灏濊瘯鎭㈠
+  const mapHealthCheckInterval = setInterval(() => {
+    try {
+      if (!map.value) {
+        console.warn('鍋ュ悍妫€鏌ワ細鍦板浘瀹炰緥涓嶅瓨鍦紝灏濊瘯鎭㈠');
+        // 灏濊瘯浠庡叏灞€鍙橀噺鎭㈠
+        if (window.__dogRunMapInstance) {
+          map.value = window.__dogRunMapInstance;
+          console.log('浠庡叏灞€鍙橀噺鎭㈠鍦板浘瀹炰緥鎴愬姛');
+        } else {
+          console.error('鏃犳硶鎭㈠鍦板浘瀹炰緥锛岄渶瑕侀噸鏂板垵濮嬪寲鍦板浘');
+          // 鍋滄鍋ュ悍妫€鏌ワ紝绛夊緟鐢ㄦ埛鎿嶄綔鎴栦笅涓€娆nShow
+          clearInterval(mapHealthCheckInterval);
+          return;
+        }
+      }
+      
+      // 妫€鏌ュ湴鍥惧鍣ㄦ槸鍚﹀瓨鍦?      const mapContainer = document.getElementById('map-container');
+      if (!mapContainer) {
+        console.warn('鍋ュ悍妫€鏌ワ細鍦板浘瀹瑰櫒涓嶅瓨鍦?);
+        return;
+      }
+      
+      // 妫€鏌ュ湴鍥惧昂瀵告槸鍚︽纭?      const size = map.value.getSize();
+      if (size.width === 0 || size.height === 0) {
+        console.warn('鍋ュ悍妫€鏌ワ細鍦板浘灏哄涓嶆纭紝灏濊瘯鍒锋柊');
+        map.value.resize();
+      }
+      
+      // 妫€鏌ョ敤鎴锋爣璁版槸鍚﹀瓨鍦?      if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+        const userId = userStore.userInfo?.id || 'current-user-location';
+        if (!userMarkers[userId]) {
+          console.warn('鍋ュ悍妫€鏌ワ細鐢ㄦ埛鏍囪涓嶅瓨鍦紝灏濊瘯閲嶆柊鍒涘缓');
+          toggleMarker();
+        }
+      }
+      
+      // 鎵ц5娆″悗鍋滄妫€鏌?      if ((window._mapHealthCheckCount || 0) >= 5) {
+        console.log('鍦板浘鍋ュ悍妫€鏌ュ凡瀹屾垚5娆★紝鍋滄妫€鏌?);
+        clearInterval(mapHealthCheckInterval);
+        window._mapHealthCheckCount = 0;
+      } else {
+        window._mapHealthCheckCount = (window._mapHealthCheckCount || 0) + 1;
+      }
+    } catch (error) {
+      console.error('鍦板浘鍋ュ悍妫€鏌ュ嚭閿?', error);
+      // 鍑洪敊杩囧鏃跺仠姝㈡鏌?      if ((window._mapHealthCheckErrorCount || 0) >= 3) {
+        console.log('鍦板浘鍋ュ悍妫€鏌ラ敊璇繃澶氾紝鍋滄妫€鏌?);
+        clearInterval(mapHealthCheckInterval);
+        window._mapHealthCheckErrorCount = 0;
+      } else {
+        window._mapHealthCheckErrorCount = (window._mapHealthCheckErrorCount || 0) + 1;
+      }
+    }
+  }, 3000); // 姣?绉掓鏌ヤ竴娆?  
+  // 纭繚涓嶄細鏃犻檺杩愯
+  setTimeout(() => {
+    if (mapHealthCheckInterval) {
+      clearInterval(mapHealthCheckInterval);
+      console.log('鍦板浘鍋ュ悍妫€鏌ュ凡瓒呮椂鍋滄');
+    }
+  }, 30000); // 鏈€澶氳繍琛?0绉?}
+
+// 鍦╫nShow鍑芥暟涓坊鍔犲杩欎釜鍋ュ悍妫€鏌ョ殑璋冪敤
+// 娉ㄦ剰锛岄渶瑕佸湪onShow鍑芥暟涓皟鐢ㄨ繖涓嚱鏁帮細
+// 渚嬪锛氬湪getNearbyUsers()涔嬪悗娣诲姞锛?// ensureMapHealthy();
+

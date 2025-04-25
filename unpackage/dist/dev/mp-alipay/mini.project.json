@@ -1,0 +1,11 @@
+{
+  "format": 2,
+  "compileOptions": {
+    "component2": true,
+    "enableNodeModuleBabelTransform": true
+  },
+  "unknownConfig": {
+    "appid": "touristappid",
+    "projectname": "CloudStorage"
+  }
+}

@@ -1,0 +1,32 @@
+/**
+ * API工具文件 - 提供API的统一导出点
+ */
+
+// 直接从src/api目录导入模块
+import user from '@/api/user.js'
+import pet from '@/api/pet.js'
+import post from '@/api/post.js'
+import walk from '@/api/walk.js'
+import location from '@/api/location.js'
+import auth from '@/api/auth.js'
+
+// 导出API模块
+export const userApi = user;
+export const petApi = pet;
+export const walkApi = walk;
+export const postApi = post;
+export const locationApi = location;
+export const authApi = auth;
+
+// 构建统一API对象
+const api = {
+  user,
+  pet,
+  post,
+  walk,
+  location,
+  auth
+};
+
+// 默认导出所有API
+export default api; 

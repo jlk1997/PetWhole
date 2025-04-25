@@ -1,0 +1,36 @@
+
+.uni-padding-wrap{
+		/* width:690rpx; */
+		padding:0 30rpx;
+	}
+.uni-common-mt{
+	margin-top:30rpx;
+}
+/* 背景色 */
+.uni-bg-red{
+	background:#F76260; color:#FFF;
+}
+.uni-bg-green{
+	background:#09BB07; color:#FFF;
+}
+.uni-bg-blue{
+	background:#007AFF; color:#FFF;
+}
+.uni-flex {
+	display: flex;
+	flex-direction: row;
+	margin: 20rpx 0 0 0;
+}
+.uni-row {
+	flex-direction: row;
+	/* flex-wrap:nowrap; */
+}
+.uni-flex-item {
+	flex: 1;
+}
+.animate__animated {
+  -webkit-animation-duration: 1s;
+  animation-duration: 1s;
+  -webkit-animation-fill-mode: both;
+  animation-fill-mode: both;
+}

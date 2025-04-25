@@ -1,0 +1,1 @@
+{"version":3,"file":"index.js","sources":["cGFnZXMvaW5kZXgvaW5kZXgudnVl"],"sourcesContent":["import MiniProgramPage from 'D:/caloriesH5/CloudStorage/pages/index/index.vue'\nmy.createPage(MiniProgramPage)"],"names":[],"mappings":";;;;;;;;;;;;;;;;;;;;;;AACA,GAAG,WAAW,eAAe;"}

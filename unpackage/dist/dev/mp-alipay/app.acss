@@ -1,0 +1,33 @@
+
+	/*每个页面公共css */
+.uni-padding-wrap{
+		/* width:690rpx; */
+		padding:0 30rpx;
+}
+.uni-common-mt{
+	margin-top:30rpx;
+}
+	/* 背景色 */
+.uni-bg-red{
+	background:#F76260; color:#FFF;
+}
+.uni-bg-green{
+	background:#09BB07; color:#FFF;
+}
+.uni-bg-blue{
+	background:#007AFF; color:#FFF;
+}
+.uni-flex {
+	display: flex;
+	flex-direction: row;
+	margin: 20rpx 0 0 0;
+}
+.uni-row {
+	flex-direction: row;
+	/* flex-wrap:nowrap; */
+	justify-content: space-between;
+}
+.uni-flex-item {
+	flex: 1;
+}
+page{--status-bar-height:25px;--top-window-height:0px;--window-top:0px;--window-bottom:0px;--window-left:0px;--window-right:0px;--window-magin:0px}

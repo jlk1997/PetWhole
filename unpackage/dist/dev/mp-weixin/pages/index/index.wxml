@@ -1,0 +1,1 @@
+<view style="display:flex;justify-content:center;flex-direction:column"><view class="animate__animated animate__backInDown" hover-class="animate__backOutRight" style="border:1rpx solid #063320;padding:30px;text-align:center"> 点击效果 </view><view class="animate__animated animate__bounce" style="animation-iteration-count:infinite">An animated element</view></view>

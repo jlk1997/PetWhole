@@ -1,0 +1,185 @@
+{
+	"pages": [
+		{
+			"path": "pages/login/login",
+			"style": {
+				"navigationBarTitleText": "登录"
+			}
+		},
+		{
+			"path": "pages/login/register",
+			"style": {
+				"navigationBarTitleText": "注册"
+			}
+		},
+		{
+			"path": "pages/map/map",
+			"style": {
+				"navigationBarTitleText": "遛狗地图",
+				"enablePullDownRefresh": false
+			}
+		},
+		{
+			"path": "pages/community/community",
+			"style": {
+				"navigationBarTitleText": "社区",
+				"enablePullDownRefresh": true,
+				"backgroundTextStyle": "dark",
+				"onReachBottomDistance": 50
+			}
+		},
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "我的",
+				"enablePullDownRefresh": true,
+				"backgroundTextStyle": "dark"
+			}
+		},
+		{
+			"path": "pages/community/create",
+			"style": {
+				"navigationBarTitleText": "发布动态"
+			}
+		},
+		{
+			"path": "pages/community/post-detail",
+			"style": {
+				"navigationBarTitleText": "帖子详情",
+				"enablePullDownRefresh": false
+			}
+		},
+		{
+			"path": "pages/pet/management",
+			"style": {
+				"navigationBarTitleText": "宠物管理",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/pet/edit",
+			"style": {
+				"navigationBarTitleText": "宠物信息"
+			}
+		},
+		{
+			"path": "pages/community/my-posts",
+			"style": {
+				"navigationBarTitleText": "我的动态",
+				"enablePullDownRefresh": true,
+				"onReachBottomDistance": 50
+			}
+		},
+		{
+			"path": "pages/walk/history",
+			"style": {
+				"navigationBarTitleText": "遛狗记录",
+				"enablePullDownRefresh": true,
+				"backgroundTextStyle": "dark",
+				"onReachBottomDistance": 50
+			}
+		},
+		{
+			"path": "pages/profile/settings",
+			"style": {
+				"navigationBarTitleText": "设置"
+			}
+		},
+		{
+			"path": "pages/profile/profile",
+			"style": {
+				"navigationBarTitleText": "个人资料"
+			}
+		},
+		{
+			"path": "pages/profile/following",
+			"style": {
+				"navigationBarTitleText": "我的关注",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/profile/followers",
+			"style": {
+				"navigationBarTitleText": "我的粉丝",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/chat/chat",
+			"style": {
+				"navigationBarTitleText": "聊天",
+				"enablePullDownRefresh": false
+			}
+		},
+		{
+			"path": "pages/chat/index",
+			"style": {
+				"navigationBarTitleText": "聊天",
+				"enablePullDownRefresh": false
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "DogRun",
+		"navigationBarBackgroundColor": "#F8F8F8",
+		"backgroundColor": "#F8F8F8"
+	},
+	"tabBar": {
+		"color": "#7A7E83",
+		"selectedColor": "#3cc51f",
+		"borderStyle": "black",
+		"backgroundColor": "#ffffff",
+		"list": [
+			{
+				"pagePath": "pages/map/map",
+				"text": "遛狗",
+				"iconPath": "static/images/map-icon.png",
+				"selectedIconPath": "static/images/map-icon-active.png"
+			},
+			{
+				"pagePath": "pages/community/community",
+				"text": "社区",
+				"iconPath": "static/images/community-icon.png",
+				"selectedIconPath": "static/images/community-icon-active.png"
+			},
+			{
+				"pagePath": "pages/chat/index",
+				"iconPath": "static/chat.png",
+				"selectedIconPath": "static/chat-active.png",
+				"text": "聊天"
+			},
+			{
+				"pagePath": "pages/index/index",
+				"text": "我的",
+				"iconPath": "static/images/profile-icon.png",
+				"selectedIconPath": "static/images/profile-icon-active.png"
+			}
+		]
+	},
+	"easycom": {
+		"autoscan": true,
+		"custom": {
+			"^u-(.*)": "@/components/u-$1/u-$1.vue"
+		}
+	},
+	"h5": {
+		"router": {
+			"mode": "hash",
+			"base": "/"
+		},
+		"devServer": {
+			"port": 5173,
+			"disableHostCheck": true,
+			"proxy": {
+				"/api": {
+					"target": "http://localhost:5000",
+					"changeOrigin": true
+				}
+			}
+		},
+		"title": "DogRun App",
+		"template": "index.html"
+	}
+} 

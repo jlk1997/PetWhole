@@ -1,0 +1,3008 @@
+<template>
+	<view class="content map-container">
+		<!-- 调试信息面板 -->
+		<view v-if="showDebug" class="debug-info">
+			<text>标记数: {{debugInfo.markerCount}}</text>
+			<text v-if="debugInfo.markerIds.length > 0">ID: {{debugInfo.markerIds.join(', ')}}</text>
+			<text v-if="debugInfo.coords.length > 0">坐标: {{debugInfo.coords.join(' | ')}}</text>
+			<text>当前位置: {{currentLocation.latitude}}, {{currentLocation.longitude}}</text>
+			<text>头像路径: {{userStore.userInfo?.avatar || '无'}}</text>
+			<text>完整头像URL: {{userAvatar || '无'}}</text>
+			<text>使用的标记: 用户在资料中上传的头像</text>
+			<text>总标记数: {{allMarkers.length}}</text>
+			<text>用户标记: {{userMarker ? '已创建' : '未创建'}}</text>
+			<button @click="forceRefreshMarker(false)">常规刷新</button>
+			<button @click="forceRefreshMarker(true)">强制使用上传头像</button>
+			<button @click="reloadUserInfo">重新加载用户信息</button>
+			<button @click="clearAvatarCache">清除头像缓存</button>
+			<button @click="showDebug = false">关闭</button>
+		</view>
+		
+		<!-- 地图组件 - 完善事件处理 -->
+		<view class="map-wrapper" @click="onMapContainerClick">
+			<div id="map-container" class="map-container"></div>
+		</view>
+		
+		<!-- 位置共享提示 -->
+		<view v-if="showLocationSharingTip" class="location-share-tip">
+			<view class="tip-content">
+				<text class="tip-text">您是否想在地图上与其他宠友分享您的位置？</text>
+				<view class="tip-buttons">
+					<view class="tip-btn cancel-btn" @tap="cancelLocationSharing">暂不分享</view>
+					<view class="tip-btn confirm-btn" @tap="confirmLocationSharing">开始分享</view>
+				</view>
+			</view>
+		</view>
+		
+		<!-- 位置共享状态指示器 -->
+		<view v-if="locationSharingStatusVisible" class="location-sharing-status">
+			<view class="status-icon" :class="{ 'active': isLocationShared }"></view>
+			<text class="status-text">{{ locationSharingStatus }}</text>
+		</view>
+		
+		<!-- 地图工具栏 -->
+		<view class="toolbar">
+			<view class="toolbar-item" @tap="centerOnUser">
+				<text class="icon">??</text>
+				<text class="toolbar-text">定位</text>
+			</view>
+			<view class="toolbar-item" @tap="zoomIn">
+				<text class="icon">?</text>
+				<text class="toolbar-text">放大</text>
+			</view>
+			<view class="toolbar-item" @tap="zoomOut">
+				<text class="icon">?</text>
+				<text class="toolbar-text">缩小</text>
+			</view>
+		</view>
+		
+		<!-- 开始/停止遛狗按钮 -->
+		<view class="start-button" @tap="toggleWalkingMode">
+			<view class="start-button-inner" :class="{'active': isWalking}">
+				<text class="start-icon">{{ isWalking ? '??' : '??' }}</text>
+				<text class="start-text">{{ isWalking ? '停止' : '开始' }}</text>
+			</view>
+		</view>
+		
+		<!-- 遛狗状态信息 -->
+		<view class="walking-info" v-if="isWalking">
+			<view class="info-item">
+				<text class="label">距离</text>
+				<text class="value">{{ (walkingDistance / 1000).toFixed(2) }}km</text>
+			</view>
+			<view class="info-item">
+				<text class="label">时间</text>
+				<text class="value">{{ formatDuration(walkingDuration) }}</text>
+			</view>
+			<view class="info-item">
+				<text class="label">配速</text>
+				<text class="value">{{ calculatePace(walkingDistance, walkingDuration) }}</text>
+			</view>
+		</view>
+		
+		<!-- 用户信息弹窗 -->
+		<UserInfoPopup
+			v-if="showUserPopup"
+			:user="selectedUser"
+			:pets="selectedUserPets"
+			:is-following="isFollowing"
+			:visible="showUserPopup"
+			@close="closeUserPopup"
+			@message="messageUser"
+			@follow="followUser"
+		/>
+		
+		<!-- 遛狗结束统计弹窗 -->
+		<WalkSummaryPopup
+			v-if="showWalkSummary"
+			:duration="walkingDuration"
+			:distance="walkingDistance"
+			:pets="myPets"
+			:selected-pet-index="selectedPetIndex"
+			:share-content="walkShareContent"
+			@close="closeWalkSummary"
+			@share="shareWalkRecord"
+		/>
+		
+		<!-- 临时按钮 - 切换显示用户头像/默认标记 -->
+		<!--
+		<view 
+			@click="toggleMarker" 
+			style="position: absolute; bottom: 220px; right: 20px; background: rgba(0,122,255,0.9); color: white; padding: 10px; border-radius: 5px; z-index: 999;"
+		>
+			切换标记
+				</view>
+		-->
+		
+		<!-- 隐藏的Canvas用于生成本地图片 -->
+		<canvas canvas-id="debug-canvas" style="width: 40px; height: 40px; position: absolute; left: -100px;"></canvas>
+	</view>
+</template>
+
+<script>
+import { ref, computed, onMounted, onUnmounted, onBeforeUnmount, nextTick, watch } from 'vue';
+import { useUserStore } from '@/store/user.js';
+import { usePetStore } from '@/store/pet.js';
+import { useLocationStore } from '@/store/location.js';
+import { formatDuration, calculatePace, calculateDistance } from '@/utils/amap.js';
+import api from '@/utils/api.js'; // 添加API导入
+
+// 修正组件导入路径
+import UserInfoPopup from '@/components/map/UserInfoPopup.vue';
+import WalkSummaryPopup from '@/components/map/WalkSummaryPopup.vue';
+
+export default {
+	components: {
+		UserInfoPopup,
+		WalkSummaryPopup
+	},
+	setup() {
+		const userStore = useUserStore();
+		const petStore = usePetStore();
+		const locationStore = useLocationStore();
+		
+		// 高德地图对象
+		const map = ref(null);
+		// 用户标记对象 - 定义userMarkers为空对象
+		const userMarkers = {};
+		
+		// 获取或创建地图实例的通用方法
+		const getMapInstance = () => {
+			if (map.value) {
+				return map.value;
+			}
+			
+			console.error('地图未初始化，尝试获取地图实例');
+			
+			// First try to get from global window object
+			if (typeof window !== 'undefined' && window.__dogRunMapInstance) {
+				console.log('从全局变量获取地图实例');
+				map.value = window.__dogRunMapInstance;
+				return map.value;
+			}
+			
+			// Then try to get from DOM element
+			if (typeof window !== 'undefined' && window.AMap) {
+				const mapContainer = document.getElementById('map-container');
+				if (mapContainer && mapContainer.__amap_instance__) {
+					map.value = mapContainer.__amap_instance__;
+					console.log('已从DOM元素获取地图实例');
+					return map.value;
+				}
+				
+				// Try to recreate the map if all else fails
+				console.log('尝试重新创建地图实例');
+				if (mapContainer) {
+					try {
+						map.value = new window.AMap.Map('map-container', {
+							zoom: 15,
+							center: [currentLocation.value.longitude, currentLocation.value.latitude],
+							resizeEnable: true
+						});
+						window.__dogRunMapInstance = map.value;
+						mapContainer.__amap_instance__ = map.value;
+						console.log('地图实例已重新创建');
+						return map.value;
+					} catch (err) {
+						console.error('无法创建地图实例:', err);
+						throw new Error('无法创建地图实例: ' + err.message);
+					}
+				} else {
+					throw new Error('无法获取地图容器');
+				}
+			}
+			
+			throw new Error('地图API未加载');
+		};
+		
+		// 获取完整头像URL的工具函数
+		function getFullAvatarUrl(avatarPath, debug = false) {
+			if (debug) {
+				console.log('getFullAvatarUrl处理:', avatarPath);
+			}
+			
+			// 如果没有提供头像，返回默认头像
+			if (!avatarPath) {
+				if (debug) console.log('没有提供avatarPath，返回默认头像');
+				return defaultAvatarBase64;
+			}
+			
+			// 检查是否是base64图片
+			if (avatarPath.startsWith('data:image/')) {
+				if (debug) console.log('是base64图片，直接返回');
+				return avatarPath;
+			}
+			
+			// 检查是否已经是http或https开头的URL
+			if (avatarPath.startsWith('http://') || avatarPath.startsWith('https://')) {
+				if (debug) console.log('已经是完整URL，直接返回:', avatarPath);
+				// 确保URL有效，可以尝试移除URL中的特殊字符
+				const cleanUrl = avatarPath.replace(/["']/g, '');
+				return cleanUrl;
+			}
+			
+			// 获取基础API URL
+			const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+			
+			// 如果是相对路径，添加基础URL
+			if (avatarPath.startsWith('/uploads/')) {
+				const fullUrl = baseUrl + avatarPath;
+				if (debug) console.log('是上传路径，添加基础URL:', fullUrl);
+				return fullUrl;
+			}
+			
+			// 如果是不带前缀的uploads目录路径，添加前导斜杠和基础URL
+			if (avatarPath.startsWith('uploads/')) {
+				const fullUrl = baseUrl + '/' + avatarPath;
+				if (debug) console.log('是不带前导斜杠的上传路径，添加基础URL:', fullUrl);
+				return fullUrl;
+			}
+			
+			// 其他情况，作为相对路径处理
+			if (debug) console.log('未识别的路径类型，尝试添加基础URL:', avatarPath);
+			// 确保路径不以斜杠开头
+			const path = avatarPath.startsWith('/') ? avatarPath.substring(1) : avatarPath;
+			return baseUrl + '/' + path;
+		}
+		
+		const mapScale = ref(16);
+		const currentLocation = ref({ latitude: 39.9087, longitude: 116.3975 });
+		const markers = ref([]);
+		const locationUpdateInterval = ref(null);
+		const nearbyUsersUpdateInterval = ref(null);
+		
+		const nearbyUsers = ref([]);
+		
+		const isWalking = ref(false);
+		const walkingPath = ref([]);
+		const walkingDistance = ref(0);
+		const walkingDuration = ref(0);
+		const walkingStartTime = ref(null);
+		const walkingTimer = ref(null);
+		const walkingLocations = ref([]);
+		
+		const showUserPopup = ref(false);
+		const selectedUser = ref({});
+		const selectedUserPets = ref([]);
+		const selectedUserFollowStatus = ref(false); // 添加缺失的变量
+		const isFollowing = ref(false);
+		
+		const showWalkSummary = ref(false);
+		const walkShareContent = ref('');
+		const myPets = ref([]);
+		const myPetsNames = computed(() => myPets.value.map(p => p.name));
+		const selectedPetIndex = ref(0);
+		
+		// 添加缺失的showDebug ref
+		const showDebug = ref(true); // 临时打开调试视图，帮助排查问题
+		const debugInfo = ref({
+			markerCount: 0,
+			markerIds: [],
+			coords: []
+		});
+		
+		// 新增位置共享提示控制
+		const showLocationSharingTip = ref(false);
+		const isLocationShared = ref(true); // 默认共享位置
+
+		// 用户朝向角度
+		const userHeading = ref(0);
+
+		// 用于默认头像 - 使用内联base64确保可用
+		const defaultAvatarBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAAXNSR0IArs4c6QAAAQNJREFUeF7t1LENACAMBDFYm+WDxAhc6/TXWK/sdWaW+xbYAL/tXgiw+QGMfgABVoHY+4EAo0DMLRBgFIi5BQKMAjG3QIBRIOYWCDAKxNwCAUaBmFsgwCgQcwsEGAViboEAo0DMLRBgFIi5BQKMAjG3QIBRIOYWCDAKxNwCAUaBmFsgwCgQcwsEGAViboEAo0DMLRBgFIi5BQKMAjG3QIBRIOYWCDAKxNwCAUaBmFsgwCgQcwsEGAViboEAo0DMLRBgFIi5BQKMAjG3QIBRIOYWCDAKxPwCxDvF0aa/hxYAAAAASUVORK5CYII=';
+		
+		// 用户头像计算属性
+		const userAvatar = computed(() => {
+			// 使用userStore中的userInfo或user，根据存在与否
+			const userInfo = userStore.userInfo || userStore.user || {};
+			
+			// 调试用户状态
+			console.log('用户信息状态:', {
+				'userStore.userAvatar存在': !!userStore.userAvatar,
+				'userStore.userInfo存在': !!userStore.userInfo,
+				'userStore.user存在': !!userStore.user,
+				'头像路径': userInfo.avatar || userStore.userAvatar
+			});
+			
+			// 先尝试从userStore的计算属性获取
+			if (userStore.userAvatar) {
+				return getFullAvatarUrl(userStore.userAvatar, true);
+			}
+			
+			// 再尝试从userInfo或user对象获取avatar
+			if (userInfo.avatar) {
+				// 调试用户头像相关信息
+				console.log('头像计算细节:', {
+					原始路径: userInfo.avatar,
+					是否以上传路径开头: userInfo.avatar.startsWith('/uploads/'),
+					环境变量: import.meta.env.VITE_API_URL || 'http://localhost:5000'
+				});
+				
+				return getFullAvatarUrl(userInfo.avatar, true);
+			}
+			
+			// 返回默认头像
+			console.log('未找到用户头像，使用默认蓝色头像');
+			return defaultAvatarBase64;
+		});
+		
+		// 用户位置标记
+		const userMarker = computed(() => {
+			if (!currentLocation.value || !currentLocation.value.latitude) {
+				return null;
+			}
+			
+			// 直接使用userAvatar计算属性获取完整头像URL
+			let iconPath = userAvatar.value;
+			
+			console.log('创建用户标记，头像路径:', iconPath);
+			
+			return {
+				id: 'user-location',
+				latitude: currentLocation.value.latitude,
+				longitude: currentLocation.value.longitude,
+				iconPath: iconPath,
+				width: 40,
+				height: 40,
+				rotate: userHeading.value,
+				anchor: {
+					x: 0.5,
+					y: 0.5
+				}
+			};
+		});
+		
+		// 合并所有标记点
+		const allMarkers = computed(() => {
+			let result = [...markers.value];
+			
+			// 添加用户位置标记
+			if (userMarker.value) {
+				// 确保用户标记总是在最顶层，先移除相同ID的旧标记
+				result = result.filter(marker => marker.id !== 'user-location');
+				// 添加用户标记
+				result.push(userMarker.value);
+				console.log('添加用户位置标记:', userMarker.value);
+			} else {
+				// 如果没有用户标记但有位置，创建一个临时标记
+				if (currentLocation.value && currentLocation.value.latitude) {
+					const tempMarker = {
+						id: 'user-location',
+						latitude: currentLocation.value.latitude,
+						longitude: currentLocation.value.longitude,
+						iconPath: userAvatar.value, // 使用userAvatar计算属性
+						width: 40,
+						height: 40,
+						rotate: userHeading.value,
+						anchor: {
+							x: 0.5,
+							y: 0.5
+						}
+					};
+					result.push(tempMarker);
+					console.log('添加临时用户标记:', tempMarker);
+				} else {
+					console.warn('用户位置标记未创建，且没有位置信息');
+				}
+			}
+			
+			return result;
+		});
+		
+		// 更新调试信息
+		function updateDebugInfo() {
+			debugInfo.value = {
+				markerCount: markers.value.length + allMarkers.value.length,
+				markerIds: markers.value.map(m => m.id).concat(allMarkers.value.map(m => m.id)),
+				coords: currentLocation.value ? [currentLocation.value.latitude.toFixed(6), currentLocation.value.longitude.toFixed(6)] : []
+			};
+		}
+		
+		// 开始位置共享
+		function startLocationSharing() {
+			if (!isLocationShared.value) return;
+			
+			try {
+				// 记录位置共享信息
+				console.log('更新位置共享:', {
+					latitude: currentLocation.value.latitude,
+					longitude: currentLocation.value.longitude
+				});
+				
+				// 仅在本地记录位置，不调用API
+				console.log('位置共享已在本地更新（不调用API）');
+				
+				// 可选：如果位置API存在，尝试调用但忽略错误
+				try {
+					if (locationStore && typeof locationStore.updateLocation === 'function') {
+						locationStore.updateLocation({
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							timestamp: new Date().toISOString()
+						}).catch(error => {
+							// 忽略API错误，仅记录日志
+							console.warn('更新位置API调用失败（已忽略）:', error);
+						});
+					}
+				} catch (apiError) {
+					// 忽略API错误
+					console.warn('位置API调用尝试失败（已忽略）:', apiError);
+				}
+			} catch (error) {
+				console.error('更新位置共享状态失败:', error);
+			}
+		}
+		
+		// 开始获取位置的函数
+		function startGettingLocation() {
+			console.log('开始获取位置...');
+			
+			// 开始监听位置
+			startLocationWatch();
+			
+			// 获取我的宠物
+			fetchMyPets();
+			
+			// 初始化地图标记
+			setTimeout(() => {
+				if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+					console.log('位置已获取，初始化用户标记');
+					toggleMarker();
+				}
+			}, 2000);
+		}
+		
+		// 获取用户附近的其他用户
+		async function getNearbyUsers() {
+			try {
+				if (!isLocationShared.value) {
+					console.log('位置共享未开启，不获取附近用户');
+					return Promise.resolve({ success: false, message: '位置共享未开启' });
+				}
+				
+				if (!currentLocation.value || !currentLocation.value.latitude || !currentLocation.value.longitude) {
+					console.error('当前位置不可用，无法获取附近用户');
+					return Promise.reject(new Error('当前位置不可用'));
+				}
+				
+				console.log('获取附近用户...');
+				
+				// 在开发环境中，确保添加当前用户到nearbyUsers
+				if (process.env.NODE_ENV === 'development') {
+					console.log('开发环境: 添加当前用户到附近用户列表');
+					
+					// 确保至少有当前用户的信息
+					if (userStore.userInfo && currentLocation.value) {
+						// 创建包含位置信息的当前用户数据
+						const currentUser = {
+							...userStore.userInfo,
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							lastUpdated: new Date().toISOString()
+						};
+						
+						// 确保只有一条记录
+						nearbyUsers.value = [currentUser];
+						console.log('已添加当前用户到附近用户列表:', currentUser);
+						
+						// 更新标记
+						updateMarkers();
+						
+						return Promise.resolve({ 
+							success: true, 
+							message: '开发环境只返回当前用户',
+							data: [currentUser] 
+						});
+					}
+				}
+				
+				// 调用API获取附近用户
+				const response = await locationStore.getNearbyUsers({
+					latitude: currentLocation.value.latitude,
+					longitude: currentLocation.value.longitude,
+					maxDistance: 5000 // 搜索5公里范围内的用户
+				});
+				
+				if (response && response.success && Array.isArray(response.data)) {
+					// 过滤掉自己的记录，因为我们会手动添加当前用户位置
+					let otherUsers = [];
+					if (userStore.userInfo && userStore.userInfo.id) {
+						otherUsers = response.data.filter(user => 
+							user.id !== userStore.userInfo.id
+						);
+						console.log('过滤后的其他用户数量:', otherUsers.length);
+					} else {
+						otherUsers = response.data;
+						console.log('未过滤的用户数量:', otherUsers.length);
+					}
+					
+					// 确保当前用户位置信息存在
+					if (userStore.userInfo && currentLocation.value) {
+						// 创建包含位置信息的当前用户数据
+						const currentUser = {
+							...userStore.userInfo,
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							lastUpdated: new Date().toISOString()
+						};
+						
+						// 合并其他用户和当前用户
+						if (otherUsers.length > 0) {
+							nearbyUsers.value = [currentUser, ...otherUsers];
+							console.log('合并后的用户列表:', nearbyUsers.value.length, '个用户 (当前用户 + 其他用户)');
+						} else {
+							nearbyUsers.value = [currentUser];
+							console.log('用户列表只包含当前用户');
+						}
+					} else {
+						nearbyUsers.value = otherUsers;
+						console.log('用户列表不包含当前用户(未登录或无位置)');
+					}
+					
+					updateMarkers();
+					console.log('获取到附近用户:', nearbyUsers.value.length);
+					
+					// 记录所有用户ID，方便调试
+					console.log('用户ID列表:', nearbyUsers.value.map(u => u?.id || '未知ID'));
+					
+					return Promise.resolve(response);
+				} else {
+					console.log('未获取到附近用户或格式错误:', response);
+					
+					// 确保即使API返回错误，也要添加当前用户
+					if (userStore.userInfo && currentLocation.value) {
+						const currentUser = {
+							...userStore.userInfo,
+							latitude: currentLocation.value.latitude,
+							longitude: currentLocation.value.longitude,
+							lastUpdated: new Date().toISOString()
+						};
+						
+						nearbyUsers.value = [currentUser];
+						console.log('API失败，只显示当前用户');
+						updateMarkers();
+					} else {
+						nearbyUsers.value = [];
+						console.log('API失败，且无当前用户信息，nearbyUsers为空');
+					}
+					
+					return Promise.resolve({ success: false, message: '无附近用户', response });
+				}
+			} catch (error) {
+				console.error('获取附近用户失败', error);
+				
+				// 即使出错也添加当前用户
+				if (userStore.userInfo && currentLocation.value) {
+					const currentUser = {
+						...userStore.userInfo,
+						latitude: currentLocation.value.latitude,
+						longitude: currentLocation.value.longitude,
+						lastUpdated: new Date().toISOString()
+					};
+					
+					nearbyUsers.value = [currentUser];
+					console.log('异常情况下，只显示当前用户');
+					updateMarkers();
+				} else {
+					nearbyUsers.value = [];
+					console.log('异常情况下，且无当前用户信息，nearbyUsers为空');
+				}
+				
+				return Promise.reject(error);
+			}
+		}
+		
+		// 更新地图标记点
+		function updateMarkers() {
+			try {
+				// 检查用户是否已登录
+				if (!userStore.isAuthenticated) {
+					console.log('用户未登录，不创建地图标记');
+					
+					// 移除所有现有标记
+					if (map.value) {
+						const allOverlays = map.value.getAllOverlays('marker');
+						if (allOverlays && allOverlays.length > 0) {
+							console.log('清除地图上所有标记');
+							allOverlays.forEach(overlay => {
+								map.value.remove(overlay);
+							});
+						}
+					}
+					
+					// 清空nearbyUsers数组
+					nearbyUsers.value = [];
+					return;
+				}
+				
+				if (!nearbyUsers.value || !nearbyUsers.value.length) {
+					console.log('没有附近用户，清除非自身标记');
+					
+					// 开发模式下，移除所有非自己的标记
+					if (map.value && allMarkers.value) {
+						allMarkers.value.forEach(marker => {
+							// 保留自己的标记，移除其他标记
+							const markerUserId = marker?.extData?.userId;
+							const currentUserId = userStore.userInfo?.id;
+							
+							console.log('标记ID:', markerUserId, '当前用户ID:', currentUserId);
+							
+							// 如果不是当前用户的标记，则移除
+							if (markerUserId && currentUserId && markerUserId !== currentUserId) {
+								console.log('移除非本人标记:', markerUserId);
+								map.value.remove(marker);
+							}
+						});
+						
+						// 过滤allMarkers数组，只保留自己的标记
+						allMarkers.value = allMarkers.value.filter(marker => {
+							return !marker.extData || !marker.extData.userId || 
+								marker.extData.userId === userStore.userInfo?.id;
+						});
+					}
+					return;
+				}
+				
+				// 记录所有当前标记的ID，用于识别重复标记
+				const existingMarkerIds = new Set();
+				if (map.value) {
+					const allOverlays = map.value.getAllOverlays('marker');
+					allOverlays.forEach(marker => {
+						try {
+							const markerId = marker?.getExtData?.()?.userId;
+							if (markerId) {
+								existingMarkerIds.add(markerId);
+							}
+						} catch (err) {
+							console.warn('获取标记ID出错:', err);
+						}
+					});
+				}
+				console.log('地图上已存在的标记ID:', Array.from(existingMarkerIds));
+				
+				console.log('更新附近用户标记，用户数量:', nearbyUsers.value.length);
+				
+				// 处理每个用户，创建新标记
+				nearbyUsers.value.forEach(user => {
+					// 跳过自己的标记
+					if (!user || !user.id || (userStore.userInfo && user.id === userStore.userInfo.id)) {
+						return;
+					}
+					
+					// 确保有经纬度
+					if (!user.latitude || !user.longitude) {
+						console.log('用户缺少位置信息:', user.nickname || user.username);
+						return;
+					}
+					
+					// 明确记录正在处理的用户ID，方便调试
+					const userId = String(user.id);
+					const position = [user.longitude, user.latitude];
+					
+					// 检查是否已存在此用户的标记，如果存在则跳过
+					if (existingMarkerIds.has(userId)) {
+						console.log(`跳过已存在的标记: ${userId}`);
+						return;
+					}
+					
+					console.log(`创建用户[${userId}]的标记:`, user.nickname || user.username);
+					
+					// 处理头像路径
+					let avatarUrl = user.userAvatar || user.avatar;
+					avatarUrl = getFullAvatarUrl(avatarUrl, true);
+					
+					console.log('处理用户标记:', userId, user.nickname, '头像:', avatarUrl ? '有' : '无');
+					
+					// 如果是base64图像，直接使用
+					if (avatarUrl && avatarUrl.startsWith('data:image/')) {
+						createUserMarkerWithImage(userId, position, avatarUrl);
+						return;
+					}
+					
+					// 使用Image对象加载头像
+					const img = new Image();
+					img.crossOrigin = 'anonymous';
+					img.onload = () => {
+						// 图片加载成功，创建用户标记
+						createUserMarkerWithImage(userId, position, avatarUrl);
+					};
+					img.onerror = () => {
+						// 图片加载失败，使用默认标记
+						console.error('获取头像失败，用户ID:', userId);
+						createDefaultMarker(position, userId);
+					};
+					img.src = avatarUrl;
+					
+					// 为防止图片加载超时，设置3秒后使用默认标记
+					setTimeout(() => {
+						if (!img.complete || img.naturalWidth === 0) {
+							console.error('头像加载超时，用户ID:', userId);
+							createDefaultMarker(position, userId);
+						}
+					}, 3000);
+				});
+				
+				console.log('地图标记更新完成');
+			} catch (error) {
+				console.error('更新地图标记时出错:', error);
+			}
+		}
+		
+		// 获取用户宠物信息
+		async function fetchUserPets(userId) {
+			try {
+				console.log('开始获取用户宠物信息，用户ID:', userId);
+				
+				// 使用正确的API路径
+				const response = await locationStore.getUserPets(userId);
+				
+				console.log('获取宠物信息响应:', response);
+				
+				if (response && response.data && Array.isArray(response.data)) {
+					selectedUserPets.value = response.data;
+					console.log('成功加载宠物数量:', selectedUserPets.value.length);
+					return response.data;
+				} else if (response && Array.isArray(response)) {
+					// 兼容直接返回数组的情况
+					selectedUserPets.value = response;
+					console.log('成功加载宠物数量(直接数组):', selectedUserPets.value.length);
+					return response;
+				} else {
+					console.warn('宠物数据格式不正确:', response);
+					selectedUserPets.value = [];
+					return [];
+				}
+			} catch (error) {
+				console.error('获取用户宠物失败', error);
+				selectedUserPets.value = [];
+				throw error; // 让调用者处理错误
+			}
+		}
+
+		// 检查是否关注该用户
+		async function checkFollowStatus(userId) {
+			try {
+				console.log('开始检查关注状态，用户ID:', userId);
+				
+				// 使用正确的API路径
+				const response = await locationStore.checkFollowStatus(userId);
+				
+				console.log('检查关注状态响应:', response);
+				
+				if (response && (response.data === true || response.following === true)) {
+					isFollowing.value = true;
+				} else {
+					isFollowing.value = false;
+				}
+				
+				console.log('关注状态:', isFollowing.value ? '已关注' : '未关注');
+				return isFollowing.value;
+			} catch (error) {
+				console.error('检查关注状态失败', error);
+				isFollowing.value = false; // 出错时默认为未关注
+				return false;
+			}
+		}
+		
+		// 获取我的宠物列表
+		async function fetchMyPets() {
+			try {
+				// 使用正确的API路径
+				const response = await petStore.fetchPets();
+				
+				if (response && Array.isArray(response)) {
+					myPets.value = response;
+				} else {
+					myPets.value = [];
+				}
+			} catch (error) {
+				console.error('获取我的宠物失败', error);
+				myPets.value = [];
+			}
+		}
+		
+		// 准备遛狗记录统计信息
+		function prepareWalkSummary() {
+			const distance = (walkingDistance.value / 1000).toFixed(2);
+			const duration = formatDuration(walkingDuration.value);
+			const pace = calculatePace(walkingDistance.value, walkingDuration.value);
+			const pets = myPetsNames.value.length ? myPetsNames.value.join('、') : '我的宠物';
+			
+			walkShareContent.value = `我带${pets}遛了${distance}公里，用时${duration}，配速${pace}！`;
+		}
+		
+		// 更新位置并计算行走距离
+		function updateLocation(newLocation, heading) {
+			// 计算与上一位置的变化来获取朝向
+			if (currentLocation.value && currentLocation.value.latitude !== 0) {
+				const dLat = newLocation.latitude - currentLocation.value.latitude;
+				const dLng = newLocation.longitude - currentLocation.value.longitude;
+				
+				// 只有当位置变化足够明显时才更新朝向
+				if (Math.abs(dLat) > 0.00001 || Math.abs(dLng) > 0.00001) {
+					// 计算方向角度 (0表示北方，顺时针增加)
+					const calculatedHeading = Math.atan2(dLng, dLat) * 180 / Math.PI;
+					console.log('方位计算：', { dLat, dLng, calculatedHeading });
+					userHeading.value = calculatedHeading;
+				}
+			}
+			
+			// 更新当前位置
+			currentLocation.value = newLocation;
+			console.log('位置已更新:', currentLocation.value, '用户头像:', userAvatar.value);
+			
+			// 如果提供了罗盘朝向，优先使用
+			if (heading !== undefined) {
+				userHeading.value = heading;
+				console.log('使用罗盘朝向:', heading);
+			}
+			
+			// 刷新用户位置标记
+			forceRefreshMarker();
+			
+			// 如果正在遛狗，更新路径和距离
+			if (isWalking.value && walkingLocations.value.length > 0) {
+				const lastPoint = walkingLocations.value[walkingLocations.value.length - 1];
+				const distance = calculateDistance(
+					lastPoint.latitude, lastPoint.longitude, 
+					newLocation.latitude, newLocation.longitude
+				);
+				
+				// 如果距离变化大于5米，记录新的点（减少路径点数量）
+				if (distance > 5) {
+					walkingLocations.value.push({
+						latitude: newLocation.latitude,
+						longitude: newLocation.longitude
+					});
+					
+					// 更新路径
+					walkingPath.value = [{
+						points: walkingLocations.value.map(loc => ({
+							latitude: loc.latitude,
+							longitude: loc.longitude
+						})),
+						color: '#007AFF',
+						width: 4
+					}];
+					
+					// 更新总距离
+					walkingDistance.value += distance;
+				}
+			}
+		}
+		
+		// 在setup中添加一个新函数，检查用户登录状态
+		function checkLoginStatus() {
+		  if (!userStore.isAuthenticated) {
+			console.log('用户未登录，需要登录才能使用地图功能');
+			// 移除任何已存在的标记
+			if (map.value) {
+			  const allOverlays = map.value.getAllOverlays('marker');
+			  if (allOverlays && allOverlays.length > 0) {
+				console.log('用户未登录，移除所有地图标记');
+				allOverlays.forEach(overlay => {
+				  try {
+					map.value.remove(overlay);
+				  } catch (err) {
+					console.warn('移除标记出错:', err);
+				  }
+				});
+			  }
+			}
+			
+			// 清空附近用户
+			nearbyUsers.value = [];
+			
+			// 显示登录提示
+			uni.showToast({
+			  title: '请先登录再使用地图功能',
+			  icon: 'none',
+			  duration: 2000
+			});
+			
+			return false;
+		  }
+		  return true;
+		}
+
+		// 修改startLocationWatch函数，添加登录检查
+		function startLocationWatch() {
+		  // 首先检查用户是否已登录
+		  if (!checkLoginStatus()) {
+			console.log('用户未登录，不启动位置监听');
+			return;
+		  }
+
+		  // 现有代码...
+		  try {
+			if (locationUpdateInterval.value) {
+			  clearInterval(locationUpdateInterval.value);
+			}
+			
+			if (nearbyUsersUpdateInterval.value) {
+			  clearInterval(nearbyUsersUpdateInterval.value);
+			}
+			
+			console.log('启动位置监听...');
+			
+			// 先获取一次当前位置
+			uni.getLocation({
+			  type: 'gcj02',
+			  success: function(res) {
+				updateLocation({
+				  latitude: res.latitude,
+				  longitude: res.longitude
+				});
+			  },
+			  fail: function(err) {
+				console.error('获取位置失败:', err);
+				uni.showToast({
+				  title: '无法获取位置信息',
+				  icon: 'none'
+				});
+			  }
+			});
+			
+			// 设置定期更新位置
+			locationUpdateInterval.value = setInterval(() => {
+			  // 再次检查用户是否已登录
+			  if (!checkLoginStatus()) {
+				clearInterval(locationUpdateInterval.value);
+				return;
+			  }
+			  
+			  uni.getLocation({
+				type: 'gcj02',
+				success: (res) => {
+				  // 获取方向信息（如果设备支持）
+				  if (typeof uni.onCompassChange === 'function') {
+					uni.onCompassChange((compass) => {
+					  // compass.direction 0-360度，正北为0
+					  updateLocation({
+						latitude: res.latitude,
+						longitude: res.longitude
+					  }, compass.direction);
+					});
+				  } else {
+					updateLocation({
+					  latitude: res.latitude,
+					  longitude: res.longitude
+					});
+				  }
+				  
+				  // 如果允许位置共享，更新服务器
+				  if (isLocationShared.value) {
+					startLocationSharing();
+				  }
+				}
+			  });
+			}, 10000); // 每10秒更新一次位置
+			
+			// 获取附近用户位置
+			nearbyUsersUpdateInterval.value = setInterval(() => {
+			  // 再次检查用户是否已登录
+			  if (!checkLoginStatus()) {
+				clearInterval(nearbyUsersUpdateInterval.value);
+				return;
+			  }
+			  
+			  getNearbyUsers();
+			}, 30000); // 每30秒更新一次附近用户
+		  } catch (error) {
+			console.error('启动位置监听出错:', error);
+		  }
+		}
+		
+		// 创建默认标记 - 移到上方，确保在调用前已定义
+		function createDefaultMarker(position, userId) {
+			console.log('创建默认标记，用户ID:', userId);
+			
+			// 确保参数有效
+			if (!position && currentLocation.value) {
+				position = [currentLocation.value.longitude, currentLocation.value.latitude];
+				console.log('使用当前位置创建默认标记:', position);
+			}
+			
+			if (!userId) {
+				userId = userStore.userInfo?.id || 'current-user-location';
+				console.warn('默认标记的userId为空，使用:', userId);
+			}
+			
+			// 确保地图已初始化
+			if (!map.value) {
+				console.error('地图未初始化，无法创建默认标记');
+				return null;
+			}
+			
+			try {
+				// 创建标记
+				const marker = new AMap.Marker({
+					position: position,
+					icon: new AMap.Icon({
+						size: new AMap.Size(40, 40),
+						image: '/static/images/default_avatar.png',
+						imageSize: new AMap.Size(40, 40)
+					}),
+					offset: new AMap.Pixel(-20, -20),
+					zIndex: 99,
+					extData: { userId: userId, type: 'user' }
+				});
+				
+				// 将标记添加到地图
+				map.value.add(marker);
+				
+				// 保存标记引用
+				userMarkers[userId] = marker;
+				
+				// 设置DOM属性和事件
+				setTimeout(() => {
+					try {
+						const dom = marker.getContentDom();
+						if (dom) {
+							dom.setAttribute('data-user-id', userId);
+							dom.setAttribute('data-id', `user-marker-${userId}`);
+							dom.addEventListener('click', () => {
+								processUserMarkerTap(userId);
+							});
+						}
+					} catch (e) {
+						console.error('设置默认标记DOM属性时出错:', e);
+					}
+				}, 100);
+				
+				// 为标记添加点击事件
+				marker.on('click', function() {
+					console.log('默认标记被点击，用户ID:', userId);
+					processUserMarkerTap(userId);
+				});
+				
+				console.log('成功创建默认标记，用户ID:', userId);
+				return marker;
+			} catch (error) {
+				console.error('创建默认标记出错:', error);
+				return null;
+			}
+		}
+
+		// 清除头像缓存
+		async function clearAvatarCache() {
+			try {
+				console.log('开始清除头像缓存...');
+				
+				// 1. 尝试清除本地存储中的用户信息
+				 uni.removeStorageSync('userInfo');
+				console.log('已清除本地用户信息缓存');
+				
+				// 2. 重新获取最新用户信息
+				await userStore.fetchUserInfo();
+				console.log('已重新获取用户信息:', userStore.userInfo);
+				
+				// 3. 清除uni的文件缓存(如果有头像)
+				if (userStore.userInfo?.avatar) {
+					const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+					const avatarUrl = userStore.userInfo.avatar.startsWith('/uploads/') 
+						? baseUrl + userStore.userInfo.avatar
+						: userStore.userInfo.avatar;
+					
+					console.log('清除头像URL缓存:', avatarUrl);
+					
+					// 强制重新下载头像
+					uni.downloadFile({
+						url: avatarUrl,
+						success: (res) => {
+							console.log('头像重新下载成功:', res.tempFilePath);
+							
+							// 使用新下载的头像强制刷新标记
+							createUserMarkerWithImage(userStore.userInfo.id, [currentLocation.value.longitude, currentLocation.value.latitude], res.tempFilePath);
+							
+							uni.showToast({
+								title: '头像缓存已清除',
+								icon: 'success'
+							});
+						},
+						fail: (err) => {
+							console.error('头像重新下载失败:', err);
+							uni.showToast({
+								title: '头像缓存清除失败',
+								icon: 'none'
+							});
+						}
+					});
+				} else {
+					console.log('用户没有头像，无需清除缓存');
+					uni.showToast({
+						title: '用户没有头像',
+						icon: 'none'
+					});
+				}
+			} catch (error) {
+				console.error('清除头像缓存失败:', error);
+				uni.showToast({
+					title: '缓存清除失败',
+					icon: 'none'
+				});
+			}
+		}
+
+		// 添加位置共享状态指示
+		const locationSharingStatusVisible = ref(false);
+		const locationSharingStatus = ref('未共享');
+
+		// 切换遛狗模式
+		function toggleWalkingMode() {
+			// 如果已经在行走状态，停止行走
+			if (isWalking.value) {
+				// 停止遛狗
+				isWalking.value = false;
+				clearInterval(walkingTimer.value);
+				walkingTimer.value = null;
+				
+				// 停止位置共享
+				isLocationShared.value = false;
+				locationSharingStatusVisible.value = false;
+				
+				// 显示结束统计
+				if (walkingDuration.value > 30) { // 至少遛狗30秒才记录
+					prepareWalkSummary();
+					showWalkSummary.value = true;
+				}
+			} else {
+				// 如果不在行走状态，显示位置共享提示
+				showLocationSharingTip.value = true;
+			}
+		}
+
+		// 取消位置共享 - 修复API错误
+		function cancelLocationSharing() {
+		  try {
+			// 直接在本地禁用位置共享，不调用API
+			isLocationShared.value = false;
+			showLocationSharingTip.value = false;
+			
+			// 更新本地状态而非服务器状态
+			console.log('已禁用位置共享（本地）');
+			
+			// 显示状态变更通知
+			uni.showToast({
+			  title: '已停止位置共享',
+			  icon: 'none'
+			});
+		  } catch (error) {
+			console.error('停止位置共享出错:', error);
+		  }
+		}
+
+		// 确认位置共享 - 修复API错误
+		function confirmLocationSharing() {
+		  try {
+			// 直接在本地启用位置共享，不调用API
+			isLocationShared.value = true;
+			showLocationSharingTip.value = false;
+			
+			// 更新本地状态
+			console.log('已启用位置共享（本地）');
+			
+			// 显示状态变更通知
+			uni.showToast({
+			  title: '已开始位置共享',
+			  icon: 'success'
+			});
+			
+			// 立即更新位置
+			startLocationSharing();
+		  } catch (error) {
+			console.error('开始位置共享出错:', error);
+		  }
+		}
+
+		// 开始遛狗模式
+		function startWalkingMode() {
+			// 开始遛狗
+			isWalking.value = true;
+			walkingStartTime.value = Date.now();
+			walkingDistance.value = 0;
+			walkingDuration.value = 0;
+			walkingLocations.value = [
+				{ latitude: currentLocation.value.latitude, longitude: currentLocation.value.longitude }
+			];
+			walkingPath.value = [{
+				points: [
+					{ latitude: currentLocation.value.latitude, longitude: currentLocation.value.longitude }
+				],
+				color: '#007AFF',
+				width: 4
+			}];
+			
+			// 启动计时器
+			walkingTimer.value = setInterval(() => {
+				walkingDuration.value = Math.floor((Date.now() - walkingStartTime.value) / 1000);
+			}, 1000);
+		}
+
+		// 添加地图拖动状态跟踪
+		const mapIsDragging = ref(false);
+
+		// 添加地图开始拖动事件处理
+		function onMapDragStart() {
+			console.log('地图开始拖动');
+			mapIsDragging.value = true;
+		}
+
+		// 添加地图结束拖动事件处理
+		function onMapDragEnd() {
+			console.log('地图结束拖动');
+			setTimeout(() => {
+				mapIsDragging.value = false;
+			}, 50); // 短暂延迟，避免与点击事件冲突
+		}
+
+		// 增强型地图点击事件，处理标记点击
+		function onMapTap(e) {
+			console.log('地图点击事件:', e);
+			
+			// 如果正在拖动地图，不处理点击
+			if (mapIsDragging.value) {
+				console.log('地图正在拖动，忽略点击');
+				return;
+			}
+			
+			// 获取点击坐标
+			const { x, y } = e.detail;
+			
+			// 如果没有坐标，无法处理
+			if (x === undefined || y === undefined) {
+				console.log('点击事件没有坐标信息');
+				return;
+			}
+			
+			// 获取页面上所有可见的标记元素
+			try {
+				// 1. 先尝试直接获取高德地图标记
+				const amapMarkers = document.querySelectorAll('.amap-marker');
+				if (amapMarkers.length > 0) {
+					console.log('找到高德地图标记:', amapMarkers.length, '个');
+					
+					// 检查点击是否在标记元素上
+					for (const marker of amapMarkers) {
+						const rect = marker.getBoundingClientRect();
+						
+						// 检查点击点是否在标记元素的矩形区域内
+						if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+							console.log('点击命中标记元素:', marker);
+							
+							// 尝试从元素获取标记ID
+							const markerId = marker.getAttribute('data-id') || 
+											marker.id || 
+											marker.getAttribute('id');
+							
+							if (markerId) {
+								// 有ID，触发标记点击事件
+								console.log('触发标记点击:', markerId);
+								onMarkerTap({detail: {markerId}});
+								return; // 处理完成，退出函数
+							}
+							
+							// 没有ID，但确实点击了标记，从附近用户中找出最接近的
+							const closestUser = findClosestUserToClick(x, y);
+							if (closestUser) {
+								console.log('找到最接近的用户:', closestUser.nickname || closestUser.username);
+								onMarkerTap({detail: {markerId: closestUser.id}});
+								return;
+							}
+						}
+					}
+				}
+				
+				// 2. 尝试查找附近用户中最接近点击位置的
+				const closestUser = findClosestUserToClick(x, y);
+				if (closestUser) {
+					console.log('找到最接近的用户:', closestUser.nickname || closestUser.username);
+					onMarkerTap({detail: {markerId: closestUser.id}});
+					return;
+				}
+			} catch (error) {
+				console.error('处理地图点击事件出错:', error);
+			}
+			
+			// 如果点击事件没有被处理为标记点击，则关闭用户弹窗
+			if (showUserPopup.value) {
+				showUserPopup.value = false;
+			}
+		}
+
+		// 查找最接近点击位置的用户
+		function findClosestUserToClick(clickX, clickY) {
+			if (!nearbyUsers.value || !nearbyUsers.value.length) return null;
+			
+			// 获取地图元素
+			const mapElement = document.getElementById('map');
+			if (!mapElement) return null;
+			
+			const mapRect = mapElement.getBoundingClientRect();
+			const mapWidth = mapRect.width;
+			const mapHeight = mapRect.height;
+			
+			// 获取地图中心点像素坐标
+			const centerX = mapRect.left + mapWidth / 2;
+			const centerY = mapRect.top + mapHeight / 2;
+			
+			// 计算点击点相对于地图中心的偏移量（像素）
+			const offsetX = clickX - centerX;
+			const offsetY = clickY - centerY;
+			
+			// 根据当前地图比例尺，估算偏移量对应的经纬度变化
+			// 注意：这是一个简化的估算，实际计算会更复杂
+			const scale = mapScale.value;
+			const latPerPixel = 0.000005 * (20 / scale); // 粗略估计每像素纬度变化
+			const lngPerPixel = 0.000005 * (20 / scale) / Math.cos(currentLocation.value.latitude * Math.PI / 180); // 考虑纬度对经度的影响
+			
+			// 计算点击位置的估计经纬度
+			const clickLat = currentLocation.value.latitude - offsetY * latPerPixel;
+			const clickLng = currentLocation.value.longitude + offsetX * lngPerPixel;
+			
+			console.log('点击经纬度估计:', {lat: clickLat, lng: clickLng});
+			
+			// 找出最接近点击位置的用户
+			let closestUser = null;
+			let minDistance = Infinity;
+			
+			nearbyUsers.value.forEach(user => {
+				if (!user.latitude || !user.longitude) return;
+				
+				// 计算用户与点击位置的距离
+				const distance = Math.sqrt(
+					Math.pow((user.latitude - clickLat) / latPerPixel, 2) + 
+					Math.pow((user.longitude - clickLng) / lngPerPixel, 2)
+				);
+				
+				// 设置一个合理的阈值（约30像素）
+				if (distance < 30 && distance < minDistance) {
+					minDistance = distance;
+					closestUser = user;
+				}
+			});
+			
+			return closestUser;
+		}
+
+		// 地图区域变更事件
+		function onMapRegionChange(e) {
+			console.log('地图区域变更:', e);
+			// 处理拖动开始和结束
+			if (e.type === 'begin' && e.causedBy === 'drag') {
+				onMapDragStart();
+			} else if (e.type === 'end' && e.causedBy === 'drag') {
+				onMapDragEnd();
+			}
+		}
+
+		// 地图容器点击处理
+		function onMapContainerClick(e) {
+			console.log('地图容器点击事件:', e);
+			
+			// 获取点击坐标
+			const { clientX, clientY } = e;
+			
+			// 检查是否点击了标记
+			const markers = document.querySelectorAll('.amap-marker');
+			for (const marker of markers) {
+				const rect = marker.getBoundingClientRect();
+				
+				// 检查点击是否在标记区域内
+				if (clientX >= rect.left && clientX <= rect.right && 
+					clientY >= rect.top && clientY <= rect.bottom) {
+					console.log('点击了标记元素:', marker);
+					
+					// 获取用户ID
+					const userId = marker.getAttribute('data-user-id');
+					if (userId) {
+						console.log('触发标记点击, 用户ID:', userId);
+						e.stopPropagation();
+						onMarkerTap({detail: {markerId: userId}});
+						return;
+					}
+				}
+			}
+			
+			// 如果没有点击标记，关闭用户弹窗
+			if (showUserPopup.value) {
+				showUserPopup.value = false;
+			}
+		}
+
+		// 地图更新事件处理函数
+		function onMapUpdated(e) {
+			// 地图更新时的回调
+			console.log('地图更新事件触发');
+			
+			// 安全更新调试信息
+			if (showDebug.value) {
+				try {
+					updateDebugInfo();
+				} catch (e) {
+					console.error('更新调试信息错误:', e);
+				}
+			}
+			
+			// 检查位置共享状态
+			const sharingEnabled = locationStore.sharingEnabled;
+			isLocationShared.value = sharingEnabled;
+			console.log('位置共享状态:', isLocationShared.value ? '已开启' : '已关闭');
+			
+			// 即使位置共享关闭，也允许创建标记和查看用户
+			
+			// 检查是否需要添加用户标记 - 避免频繁添加
+			if (!window._lastMarkerCheck || (Date.now() - window._lastMarkerCheck > 30000)) {
+				window._lastMarkerCheck = Date.now();
+				
+				try {
+					// 检查是否有用户标记
+					const hasUserMarker = allMarkers.value.some(m => m.id === 'user-location');
+					
+					if (currentLocation.value && 
+						typeof currentLocation.value.latitude !== 'undefined' && 
+						currentLocation.value.latitude !== null &&
+						!hasUserMarker) {
+						console.log('添加用户标记...');
+						// 获取用户头像URL
+						const avatarUrl = userAvatar.value;
+						
+						// 标记用户自身的ID
+						const userId = userStore.userInfo ? userStore.userInfo.id : 'user-location';
+						
+						// 获取用户当前位置
+						const userPosition = [currentLocation.value.longitude, currentLocation.value.latitude];
+						
+						// 检查是否已经是Base64格式
+						if (avatarUrl.startsWith('data:image/')) {
+							// 直接使用Base64创建标记
+							createUserMarkerWithImage(userId, userPosition, avatarUrl);
+						} else {
+							// 尝试加载图片
+							const img = new Image();
+							img.crossOrigin = 'anonymous';
+							img.onload = () => {
+								// 图片加载成功，创建用户标记
+								createUserMarkerWithImage(userId, userPosition, avatarUrl);
+							};
+							img.onerror = () => {
+								// 图片加载失败，使用默认头像
+								console.error('加载用户头像失败，使用默认头像');
+								createUserMarkerWithImage(userId, userPosition, defaultAvatarBase64);
+							};
+							img.src = avatarUrl;
+							
+							// 为防止图片加载超时，设置3秒后使用默认头像
+							setTimeout(() => {
+								if (!img.complete || img.naturalWidth === 0) {
+									createUserMarkerWithImage(userId, userPosition, defaultAvatarBase64);
+								}
+							}, 3000);
+						}
+					}
+				} catch (e) {
+					console.error('添加标记错误:', e);
+				}
+			}
+		}
+
+		// 添加onMarkerTap函数的定义
+		async function onMarkerTap(e) {
+			try {
+				// 尝试从事件对象获取标记ID
+				let markerId = e.markerId || e.detail?.markerId;
+				
+				// 如果事件对象没有markerId，尝试从detail.marker获取
+				if (!markerId && e.detail?.marker) {
+					markerId = e.detail.marker.id;
+				}
+				
+				// 如果还没有找到markerId，尝试从nativeEvent获取
+				if (!markerId && e.detail?.nativeEvent) {
+					const target = e.detail.nativeEvent.target;
+					if (target && target.dataset) {
+						markerId = target.dataset.userId || target.dataset.id;
+					}
+				}
+				
+				// 处理获取到的标记ID
+				if (markerId) {
+					console.log('获取到标记ID:', markerId);
+					await processUserMarkerTap(markerId);
+				} else {
+					console.error('无法获取标记ID');
+					// 尝试从nearbyUsers中选择第一个用户作为备选
+					if (Array.isArray(nearbyUsers.value) && nearbyUsers.value.length > 0) {
+						console.log('使用第一个附近用户作为备选');
+						await processUserMarkerTap(nearbyUsers.value[0].id);
+					} else {
+						// 无法确定用户，显示提示
+						uni.showToast({
+							title: '无法获取用户信息',
+							icon: 'none'
+						});
+					}
+				}
+			} catch (err) {
+				console.error('标记点击处理出错:', err);
+				uni.showToast({
+					title: '操作失败，请重试',
+					icon: 'none'
+				});
+			}
+		}
+
+		/**
+		 * 处理用户标记点击事件
+		 * @param {String} markerId 标记ID
+		 */
+		async function processUserMarkerTap(userId) {
+			console.log('处理用户标记点击，用户ID:', userId);
+			
+			// 如果是当前用户
+			if (userId === userStore.userInfo?.id || userId === 'current-user-location') {
+				console.log('点击了当前用户的标记');
+				uni.showToast({
+					title: '这是您的位置',
+					icon: 'none',
+					duration: 2000
+				});
+				return;
+			}
+			
+			// 查找对应的用户信息
+			const user = nearbyUsers.value.find(u => u.id === userId);
+			if (!user) {
+				console.error('未找到匹配的用户信息，userId:', userId);
+				return;
+			}
+			
+			// 显示用户详情
+			showUserInfo(user);
+		}
+
+		// 添加一个函数来定期扫描和处理标记元素
+		function setupMarkerClickHandlers() {
+			try {
+				// 找到所有AMap标记元素
+				const markers = document.querySelectorAll('.amap-marker');
+				if (markers.length > 0) {
+					console.log('发现地图标记元素:', markers.length, '个');
+					
+					// 调试信息：显示所有标记元素的data-user-id属性
+					let userIDs = [];
+					markers.forEach(marker => {
+						const userId = marker.getAttribute('data-user-id') || 
+							(marker.id ? marker.id.match(/marker-([^"\s]+)/)?.[1] : null);
+						if (userId) userIDs.push(userId);
+					});
+					console.log('地图上的用户ID:', userIDs);
+					
+					// 使用setTimeout确保DOM操作在渲染完成后进行
+					setTimeout(() => {
+						// 遍历所有标记元素
+						markers.forEach((marker) => {
+							// 如果标记没有clickHandler属性，添加事件监听器
+							if (!marker.hasAttribute('data-click-handler')) {
+								// 添加点击事件
+								marker.addEventListener('click', (e) => {
+									e.stopPropagation(); // 阻止事件冒泡
+									console.log('标记点击事件 (直接):', marker);
+									
+									// 尝试各种方法获取用户ID
+									let userId = marker.getAttribute('data-user-id');
+									
+									// 尝试从类名中提取
+									if (!userId && marker.className) {
+										const match = marker.className.match(/user-marker-([^"\s]+)/);
+										if (match && match[1]) {
+											userId = match[1];
+										}
+									}
+									
+									// 尝试从marker id中提取
+									if (!userId && marker.id) {
+										const match = marker.id.match(/marker-([^"\s]+)/);
+										if (match && match[1]) {
+											userId = match[1];
+										}
+									}
+									
+									// 从图像元素尝试获取userId
+									if (!userId) {
+										const img = marker.querySelector('img');
+										if (img) {
+											userId = img.getAttribute('data-user-id');
+										}
+									}
+									
+									console.log('尝试提取的用户ID:', userId);
+									
+									if (userId) {
+										console.log('找到用户ID，触发标记点击事件:', userId);
+										// 使用processUserMarkerTap处理标记点击
+										processUserMarkerTap(userId);
+									} else if (nearbyUsers.value && nearbyUsers.value.length > 0) {
+										// 如果无法识别，尝试使用第一个附近用户
+										console.log('无法识别用户ID，使用第一个附近用户');
+										processUserMarkerTap(nearbyUsers.value[0].id);
+									}
+								});
+								
+								// 标记此元素已添加事件处理器
+								marker.setAttribute('data-click-handler', 'true');
+								
+								// 设置样式确保元素可点击
+								marker.style.cursor = 'pointer';
+								marker.style.pointerEvents = 'auto';
+								marker.style.zIndex = '999';
+								
+								// 找到内部图像元素并应用样式
+								const iconElem = marker.querySelector('.amap-icon');
+								if (iconElem) {
+									iconElem.style.borderRadius = '50%';
+									iconElem.style.overflow = 'hidden';
+									
+									// 处理图像元素
+									const imgElem = iconElem.querySelector('img');
+									if (imgElem) {
+										// 为图像设置data-user-id属性
+										const markerId = marker.getAttribute('data-user-id');
+										if (markerId) {
+											imgElem.setAttribute('data-user-id', markerId);
+											// 调试信息
+											console.log('设置图像元素data-user-id属性:', markerId);
+										}
+										
+										// 设置样式
+										imgElem.style.borderRadius = '50%';
+										imgElem.style.width = '100%';
+										imgElem.style.height = '100%';
+										imgElem.style.objectFit = 'cover';
+										
+										// 也为图像添加点击事件
+										imgElem.addEventListener('click', (e) => {
+											e.stopPropagation();
+											console.log('图像点击事件');
+											
+											// 获取用户ID从自身或父元素
+											const imgUserId = imgElem.getAttribute('data-user-id') || 
+												marker.getAttribute('data-user-id');
+											
+											console.log('图像点击 - 提取的用户ID:', imgUserId);
+											
+											if (imgUserId) {
+												console.log('找到图像用户ID，处理标记点击:', imgUserId);
+												processUserMarkerTap(imgUserId);
+											}
+										});
+									}
+								}
+							}
+						});
+					}, 100); // 添加100ms延迟确保DOM完全渲染
+				}
+			} catch (e) {
+				console.error('处理地图标记出错:', e);
+			}
+		}
+
+		// 创建计时器，定期执行setupMarkerClickHandlers
+		let markerScanInterval;
+
+		// 监听登录状态变化
+		watch(() => userStore.isAuthenticated, (isAuthenticated) => {
+			console.log('用户登录状态变更:', isAuthenticated);
+			if (isAuthenticated) {
+				// 用户登录，获取宠物数据
+				console.log('用户已登录，获取宠物数据');
+				petStore.fetchPets().then(pets => {
+					console.log('登录后获取宠物数据成功:', pets);
+					myPets.value = pets;
+				}).catch(err => {
+					console.error('登录后获取宠物数据失败:', err);
+				});
+			} else {
+				// 用户登出，清空宠物数据
+				console.log('用户已登出，清空宠物数据');
+				myPets.value = [];
+			}
+		});
+
+		onBeforeUnmount(() => {
+			// 在组件卸载时清理计时器
+			if (markerScanInterval) {
+				clearInterval(markerScanInterval);
+			}
+		});
+
+		/**
+		 * 清理额外的标记
+		 * 在开发环境中，我们只需要保留当前用户的标记
+		 */
+		function cleanupExtraMarkers() {
+			console.log('执行标记清理...');
+			if (!map.value) return;
+			
+			// 获取当前地图上的所有标记
+			const allMapMarkers = map.value.getAllOverlays('marker');
+			if (!allMapMarkers || allMapMarkers.length === 0) {
+				console.log('地图上没有标记，无需清理');
+				return;
+			}
+			
+			console.log(`地图上共有 ${allMapMarkers.length} 个标记`);
+			
+			// 获取当前用户ID
+			const currentUserId = userStore.userInfo?.id || userStore.user?._id;
+			if (!currentUserId) {
+				console.log('未找到当前用户ID，跳过标记清理');
+				return;
+			}
+			
+			console.log('当前用户ID:', currentUserId);
+			
+			// 获取需要保留的所有标记ID（用户ID和当前位置标记）
+			const validMarkerIds = [currentUserId, 'current-user-location'];
+			
+			// 记录所有标记ID用于调试
+			const markerIds = [];
+			allMapMarkers.forEach(marker => {
+				try {
+					const markerUserId = marker?.getExtData?.()?.userId || '未知';
+					markerIds.push(markerUserId);
+				} catch (err) {
+					console.error('获取标记ID出错:', err);
+				}
+			});
+			console.log('地图上的标记ID:', markerIds);
+			
+			// 遍历标记，移除非当前用户的标记
+			const keptMarkers = [];
+			allMapMarkers.forEach(marker => {
+				try {
+					const markerId = marker?.getExtData?.()?.userId;
+					if (!markerId) {
+						console.log('找到无ID标记，移除');
+						map.value.remove(marker);
+						return;
+					}
+					
+					// 检查是否是有效的标记ID
+					if (validMarkerIds.includes(markerId)) {
+						console.log(`保留标记ID: ${markerId}`);
+						keptMarkers.push(markerId);
+					} else {
+						console.log(`移除标记ID: ${markerId}`);
+						map.value.remove(marker);
+						
+						// 同时从userMarkers对象中移除
+						if (userMarkers[markerId]) {
+							delete userMarkers[markerId];
+						}
+					}
+				} catch (err) {
+					console.error('清理标记时出错:', err);
+				}
+			});
+			
+			console.log(`清理完成，保留标记: ${keptMarkers.join(', ')}`);
+		}
+
+		/**
+		 * 显示用户宠物模态框
+		 * @param {Object} user 用户对象
+		 */
+		const showUserPetModal = async (user) => {
+		  console.log('显示用户宠物模态框:', user);
+		  
+		  // 先关闭已打开的弹窗
+		  showUserPopup.value = false;
+		  
+		  // 检查用户对象是否有效
+		  const userId = user?._id || user?.id;
+		  if (!userId) {
+			console.error('无效的用户数据:', user);
+			
+			// 显示错误提示
+			uni.showToast({
+			  title: '无法获取用户信息',
+			  icon: 'none'
+			});
+			return;
+		  }
+		  
+		  try {
+			// 显示加载状态
+			uni.showLoading({
+			  title: '加载中...'
+			});
+			
+			// 如果是当前用户，直接从store获取宠物数据
+			const currentUserId = userStore.user?._id || userStore.userInfo?.id;
+			if (userId === currentUserId) {
+			  console.log('当前用户，从store获取宠物数据');
+			  
+			  // 确保petStore中的宠物数据已更新
+			  if (!petStore.pets || petStore.pets.length === 0) {
+			    console.log('尝试从服务器获取最新宠物数据');
+			    await petStore.fetchPets();
+			  }
+			  
+			  // 创建带有宠物数据的用户对象
+			  const currentUserWithPets = {
+			    ...(userStore.user || userStore.userInfo || {}),
+			    pets: petStore.pets || [],
+			    isCurrentUser: true // 添加标记，表示这是当前用户
+			  };
+			  
+			  console.log('用户宠物数据:', petStore.pets);
+			  
+			  selectedUser.value = currentUserWithPets;
+			  selectedUserPets.value = petStore.pets || [];
+			  selectedUserFollowStatus.value = false; // 自己不需要关注状态
+					
+			  // 设置isFollowing供模板使用
+			  isFollowing.value = false;
+			  
+			  // 隐藏加载状态
+			  uni.hideLoading();
+			  
+			  // 显示用户弹窗
+			  showUserPopup.value = true;
+			  return;
+			}
+			
+			// 本地模拟宠物数据和关注状态
+			let petsData = [];
+			let followStatus = { following: false };
+			
+			// 如果我们没有完整的用户信息，尝试获取它
+			if (!user.nickname || !user.avatar) {
+			  try {
+				const userResponse = await getUserInfo(userId);
+				if (userResponse && userResponse.data && userResponse.data.user) {
+				  user = userResponse.data.user;
+				  console.log('成功获取用户详细信息:', user);
+				}
+			  } catch (userInfoError) {
+				console.warn('获取用户详细信息失败，使用现有数据:', userInfoError);
+			  }
+			}
+			
+			// 尝试通过API获取数据（但处理可能的错误）
+			try {
+			  // 并行获取宠物信息和关注状态
+			  await Promise.all([
+				// 获取宠物信息
+				(async () => {
+				  if (locationStore && typeof locationStore.getUserPets === 'function') {
+					try {
+					  const petsResponse = await locationStore.getUserPets(userId);
+					  if (petsResponse && (Array.isArray(petsResponse) || Array.isArray(petsResponse.data))) {
+						petsData = Array.isArray(petsResponse) ? petsResponse : petsResponse.data || [];
+					  }
+					} catch (petError) {
+					  console.warn('获取用户宠物数据失败:', petError);
+					}
+				  }
+				})(),
+				
+				// 获取关注状态
+				(async () => {
+				  if (locationStore && typeof locationStore.checkFollowStatus === 'function') {
+					try {
+					  const followResponse = await locationStore.checkFollowStatus(userId);
+					  if (followResponse && typeof followResponse.following === 'boolean') {
+						followStatus = followResponse;
+					  }
+					} catch (followError) {
+					  console.warn('获取关注状态失败:', followError);
+					}
+				  }
+				})()
+			  ]);
+			} catch (apiError) {
+			  console.warn('API调用失败，使用本地数据:', apiError);
+			}
+			
+			// 更新选中的用户和宠物
+			// 创建包含宠物数据的用户对象
+			const userWithPets = {
+			  ...user,
+			  pets: petsData,
+			  isCurrentUser: false
+			};
+			
+			selectedUser.value = userWithPets;
+			selectedUserPets.value = petsData;
+			selectedUserFollowStatus.value = followStatus.following;
+			
+			// 设置isFollowing供模板使用
+			isFollowing.value = selectedUserFollowStatus.value;
+			
+			// 隐藏加载状态
+			uni.hideLoading();
+			
+			// 显示用户弹窗
+			showUserPopup.value = true;
+			
+			// 添加调试信息
+			console.log('显示弹窗信息:', {
+			  用户: selectedUser.value,
+			  宠物列表: selectedUserPets.value,
+			  用户宠物属性: selectedUser.value.pets
+			});
+		  } catch (error) {
+			console.error('获取用户宠物数据失败:', error);
+			
+			// 隐藏加载状态
+			uni.hideLoading();
+			
+			// 显示错误提示
+			uni.showToast({
+			  title: '获取用户信息失败',
+			  icon: 'none'
+			});
+		  }
+		};
+
+		/**
+		 * 关闭用户弹窗
+		 */
+		function closeUserPopup() {
+			console.log('关闭用户弹窗');
+			showUserPopup.value = false;
+		}
+
+		/**
+		 * 隐藏用户弹窗的函数
+		 */
+		function hideUserPopup() {
+			console.log('隐藏用户弹窗');
+			showUserPopup.value = false;
+		}
+
+		/**
+		 * 获取用户信息
+		 * @param {String|Number} userId 用户ID
+		 * @returns {Promise} 包含用户信息的Promise
+		 */
+		const getUserInfo = async (userId) => {
+			// 获取基础API URL
+			const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+			
+			try {
+				const res = await new Promise((resolve, reject) => {
+					uni.request({
+						url: `${baseUrl}/api/users/${userId}`,
+						method: 'GET',
+						header: {
+							'Authorization': `Bearer ${userStore.token}`
+						},
+						success: (res) => {
+							console.log('获取用户信息响应:', res);
+							resolve(res);
+						},
+						fail: (err) => {
+							console.error('请求用户信息失败:', err);
+							reject(err);
+						}
+					});
+				});
+				
+				if (res.statusCode === 200 && res.data) {
+					return res;
+				} else if (res.statusCode === 401) {
+					console.error('未认证，可能需要登录');
+					uni.showToast({
+						title: '请先登录',
+						icon: 'none'
+					});
+					throw new Error('未认证: 请先登录');
+				} else {
+					console.error('获取用户信息失败:', res);
+					throw new Error('获取用户信息失败: ' + (res.data?.message || '未知错误'));
+				}
+			} catch (err) {
+				console.error('获取用户信息过程中发生错误:', err);
+				throw err;
+			}
+		}
+
+		// 返回各个变量和函数供模板使用
+		return {
+			userStore,
+			petStore,
+			mapScale,
+			currentLocation,
+			markers,
+			allMarkers,
+			nearbyUsers,
+			isWalking,
+			walkingPath,
+			walkingDistance,
+			walkingDuration,
+			showUserPopup,
+			selectedUser,
+			selectedUserPets,
+			selectedUserFollowStatus,
+			isFollowing,
+			showWalkSummary,
+			walkShareContent,
+			myPets,
+			myPetsNames,
+			selectedPetIndex,
+			showDebug,
+			debugInfo,
+			showLocationSharingTip,
+			isLocationShared,
+			userAvatar,
+			userHeading,
+			defaultAvatarBase64,
+			userMarker,
+			locationSharingStatusVisible,
+			locationSharingStatus,
+			
+			// 函数
+			formatDuration,
+			calculatePace,
+			forceRefreshMarker,
+			toggleMarker,
+			toggleWalkingMode,
+			confirmLocationSharing,
+			cancelLocationSharing,
+			
+			// 添加缺失的事件处理函数
+			onMarkerTap,
+			onMapTap,
+			onMapRegionChange,
+			onMapUpdated,
+			hideUserPopup, // 暴露新函数给模板
+			
+			// 其他已有函数
+			centerOnUser() {
+				console.log('定位到用户位置');
+				try {
+					// 获取地图实例
+					map.value = getMapInstance();
+					
+					// 检查位置信息是否有效
+					if (!currentLocation.value || typeof currentLocation.value.latitude === 'undefined') {
+						console.warn('当前位置信息不可用，无法定位');
+						uni.showToast({
+							title: '无法获取位置信息',
+							icon: 'none'
+						});
+						return;
+					}
+					
+					// 设置地图中心点到用户位置
+					const pos = [currentLocation.value.longitude, currentLocation.value.latitude];
+					console.log('设置地图中心到:', pos);
+					map.value.setCenter(pos);
+					map.value.setZoom(16); // 同时设置适当的缩放级别
+					
+					// 显示成功提示
+					uni.showToast({
+						title: '已定位到当前位置',
+						icon: 'none',
+						duration: 1000
+					});
+				} catch (e) {
+					console.error('设置地图中心点出错:', e);
+					uni.showToast({
+						title: '定位失败，请重试',
+						icon: 'none'
+					});
+				}
+			},
+			zoomIn() {
+				console.log('放大地图');
+				try {
+					// 获取地图实例
+					map.value = getMapInstance();
+					
+					// 获取当前缩放级别
+					const currentZoom = map.value.getZoom();
+					console.log('当前缩放级别:', currentZoom);
+					
+					// 增加缩放级别，确保不超过最大值(通常是18或19)
+					const newZoom = Math.min(currentZoom + 1, 19);
+					console.log('新缩放级别:', newZoom);
+					
+					// 设置新的缩放级别
+					map.value.setZoom(newZoom);
+					
+					// 显示成功提示
+					uni.showToast({
+						title: '已放大地图',
+						icon: 'none',
+						duration: 500
+					});
+				} catch (e) {
+					console.error('地图放大出错:', e);
+					uni.showToast({
+						title: '操作失败，请重试',
+						icon: 'none'
+					});
+				}
+			},
+			zoomOut() {
+				console.log('缩小地图');
+				try {
+					// 获取地图实例
+					map.value = getMapInstance();
+					
+					// 获取当前缩放级别
+					const currentZoom = map.value.getZoom();
+					console.log('当前缩放级别:', currentZoom);
+					
+					// 减少缩放级别，确保不低于最小值(通常是3或4)
+					const newZoom = Math.max(currentZoom - 1, 3);
+					console.log('新缩放级别:', newZoom);
+					
+					// 设置新的缩放级别
+					map.value.setZoom(newZoom);
+					
+					// 显示成功提示
+					uni.showToast({
+						title: '已缩小地图',
+						icon: 'none',
+						duration: 500
+					});
+				} catch (e) {
+					console.error('地图缩小出错:', e);
+					uni.showToast({
+						title: '操作失败，请重试',
+						icon: 'none'
+					});
+				}
+			},
+			closeUserPopup,
+			messageUser(userId) {
+				// 实现发送消息功能
+				uni.navigateTo({
+					url: `/pages/profile/message?userId=${userId}`
+				});
+			},
+			followUser(userId) {
+				// 实现关注用户功能
+				isFollowing.value = !isFollowing.value;
+				// 这里应该调用API更新关注状态
+			},
+			closeWalkSummary() {
+				console.log('关闭步行摘要');
+				showWalkSummary.value = false;
+			},
+			shareWalkRecord() {
+				// 实现分享遛狗记录功能
+				uni.share({
+					provider: 'weixin',
+					scene: 'WXSceneSession',
+					type: 0,
+					title: '我的遛狗记录',
+					summary: walkShareContent.value,
+					success: function (res) {
+						console.log('分享成功：' + JSON.stringify(res));
+					},
+					fail: function (err) {
+						console.log('分享失败：' + JSON.stringify(err));
+					}
+				});
+			},
+			reloadUserInfo,
+			clearAvatarCache,
+			onMapContainerClick
+		};
+	}
+}
+</script>
+
+<style lang="scss">
+.map-container {
+	position: relative;
+	width: 100%;
+	height: 100vh;
+	overflow: hidden;
+}
+
+.map {
+	width: 100%;
+	height: 100%;
+}
+
+.debug-info {
+	position: absolute;
+	top: 10px;
+	left: 10px;
+	background: rgba(0, 0, 0, 0.7);
+	color: white;
+	padding: 10px;
+	border-radius: 5px;
+	font-size: 12px;
+	z-index: 999;
+	max-width: 80%;
+	max-height: 80%;
+	overflow-y: auto;
+	
+	text {
+		display: block;
+		margin-bottom: 5px;
+		word-break: break-all;
+	}
+	
+	button {
+		margin-top: 10px;
+		padding: 5px;
+		background: #007AFF;
+		color: white;
+		border: none;
+		border-radius: 3px;
+	}
+}
+
+.toolbar {
+	position: absolute;
+	top: 20px;
+	right: 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	z-index: 10;
+}
+
+.toolbar-item {
+	width: 40px;
+	height: 40px;
+	background-color: white;
+	border-radius: 20px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+	
+	.icon {
+		font-size: 18px;
+	}
+	
+	.toolbar-text {
+		font-size: 10px;
+		margin-top: 2px;
+	}
+}
+
+.start-button {
+	position: absolute;
+	bottom: 150px; /* Increased from 90px to 150px to move it higher */
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 10;
+	
+	.start-button-inner {
+		width: 120px;
+		height: 50px;
+		background-color: #007AFF;
+		border-radius: 25px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+		
+		&.active {
+			background-color: #FF3B30;
+		}
+		
+		.start-icon {
+			font-size: 20px;
+			margin-right: 5px;
+			color: white;
+		}
+		
+		.start-text {
+			color: white;
+			font-size: 16px;
+			font-weight: bold;
+		}
+	}
+}
+
+.walking-info {
+	position: absolute;
+	top: 20px;
+	left: 50%;
+	transform: translateX(-50%);
+	background-color: rgba(255, 255, 255, 0.9);
+	border-radius: 10px;
+	padding: 10px 20px;
+	display: flex;
+	gap: 20px;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+	z-index: 10;
+	
+	.info-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		
+		.label {
+			font-size: 12px;
+			color: #666;
+		}
+		
+		.value {
+			font-size: 16px;
+			font-weight: bold;
+			color: #333;
+		}
+	}
+}
+
+.location-share-tip {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	background-color: white;
+	border-radius: 15px;
+	padding: 20px;
+	box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+	z-index: 100;
+	width: 80%;
+	max-width: 300px;
+	
+	.tip-content {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		
+		.tip-text {
+			font-size: 16px;
+			text-align: center;
+			margin-bottom: 20px;
+			color: #333;
+		}
+		
+		.tip-buttons {
+			display: flex;
+			width: 100%;
+			gap: 10px;
+			
+			.tip-btn {
+				flex: 1;
+				padding: 10px;
+				border-radius: 8px;
+				text-align: center;
+				font-size: 14px;
+				font-weight: bold;
+				
+				&.cancel-btn {
+					background-color: #F1F1F1;
+					color: #666;
+				}
+				
+				&.confirm-btn {
+					background-color: #007AFF;
+					color: white;
+				}
+			}
+		}
+	}
+}
+
+/* 自定义地图标记样式 */
+:deep(.map) {
+	::v-deep .amap-marker-content img {
+		border-radius: 50%;
+		border: 3px solid #007AFF;
+		box-shadow: 0 0 10px rgba(0, 122, 255, 0.6);
+	}
+    
+    .uni-map-marker, .uni-map-marker-content {
+        border-radius: 50% !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    }
+    
+    .uni-map-marker img, .uni-map-marker-content img {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
+        border-radius: 50% !important;
+        overflow: hidden !important;
+    }
+    
+    /* 点击效果 */
+    .uni-map-marker:active, .uni-map-marker.active {
+        transform: scale(1.1) !important;
+        transition: transform 0.2s !important;
+    }
+}
+
+/* 设置用户标记样式 */
+.user-marker {
+	width: 44px;
+	height: 44px;
+	border-radius: 50%;
+	border: 3px solid #007AFF;
+	background-color: white;
+	box-shadow: 0 4px 12px rgba(0, 122, 255, 0.4);
+	overflow: hidden;
+	
+	img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+}
+
+/* 位置共享状态指示器 */
+.location-sharing-status {
+	position: absolute;
+	top: 20px;
+	left: 50%;
+	transform: translateX(-50%);
+	background-color: rgba(255, 255, 255, 0.9);
+	border-radius: 10px;
+	padding: 10px;
+	display: flex;
+	gap: 10px;
+	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+	z-index: 10;
+	
+	.status-icon {
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		background-color: #007AFF;
+		
+		&.active {
+			background-color: #FF3B30;
+		}
+	}
+	
+	.status-text {
+		font-size: 16px;
+		font-weight: bold;
+		color: #333;
+	}
+}
+
+/* 优化地图标记样式 - 增强圆形效果 */
+:deep(.map) {
+    /* 同时选择多种可能的标记元素以确保样式生效 */
+    .amap-marker-content img, 
+    .uni-map-marker img, 
+    .uni-map-marker-content img,
+    .uni-map .uni-map-cover-image {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
+        border-radius: 50% !important;
+        border: 3px solid #007AFF !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    }
+    
+    /* 确保标记容器也是圆形 */
+    .amap-marker-content, 
+    .uni-map-marker, 
+    .uni-map-marker-content,
+    .uni-map .uni-map-cover-image {
+        border-radius: 50% !important;
+        overflow: hidden !important;
+        background-color: white !important;
+    }
+    
+    /* 点击效果 */
+    .amap-marker-content:active,
+    .uni-map-marker:active, 
+    .uni-map-marker-content:active,
+    .uni-map-cover-image:active,
+    .amap-marker-content.active,
+    .uni-map-marker.active, 
+    .uni-map-marker-content.active,
+    .uni-map-cover-image.active {
+        transform: scale(1.1) !important;
+        transition: transform 0.2s !important;
+    }
+}
+
+/* 添加额外的全局样式以确保覆盖原始样式 */
+.user-marker-circle {
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    background-color: white !important;
+    border: 3px solid #007AFF !important;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.4) !important;
+}
+
+/* 优化地图标记样式 - 统一所有可能的选择器 */
+:deep(.map) {
+    .amap-marker-content img, 
+    .uni-map-marker img, 
+    .uni-map-marker-content img,
+    .uni-map-cover-image,
+    .uni-map-cover-view img {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
+        border-radius: 50% !important;
+        border: 3px solid #007AFF !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    }
+    
+    /* 确保标记容器也是圆形 */
+    .amap-marker-content, 
+    .uni-map-marker, 
+    .uni-map-marker-content,
+    .uni-map-cover-image,
+    .uni-map-cover-view {
+        border-radius: 50% !important;
+        overflow: hidden !important;
+        background-color: white !important;
+    }
+}
+
+/* 添加强制样式，确保圆形显示 */
+.custom-marker-class {
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    border: 3px solid #007AFF !important;
+    background-color: white !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* 直接修改图片元素样式 */
+img.marker-image {
+    border-radius: 50% !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+}
+
+.map-wrapper {
+	position: relative;
+	width: 100%;
+	height: 100vh;
+}
+
+.map-container {
+	width: 100%;
+	height: 100%;
+}
+
+.map-overlay {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none; /* 允许点击穿透到下层元素 */
+	z-index: 5;
+}
+</style>
+
+<style>
+/* 直接修复amap标记元素样式 */
+.amap-marker .amap-icon,
+.amap-marker .amap-icon img {
+    border-radius: 50% !important;
+    overflow: hidden !important;
+    background-color: white !important;
+    border: 3px solid #007AFF !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+.amap-marker .amap-icon img {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+}
+
+/* 确保点击事件能够正常传递 */
+.amap-marker {
+    cursor: pointer !important;
+    pointer-events: auto !important;
+}
+
+.map-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+}
+
+.map-container {
+    width: 100%;
+    height: 100%;
+}
+
+/* 使标记可点击 */
+.amap-markers .amap-marker {
+    cursor: pointer !important;
+    pointer-events: auto !important;
+}
+</style>
+
+/**
+ * 测试用户弹窗 - 在找不到用户信息时显示基本的测试信息
+ * @param {String} userId 用户ID
+ */
+function testUserPopup(userId) {
+	console.log('测试用户弹窗');
+	
+	if (!userId) {
+		console.log(' 未找到用户ID，无法测试弹窗');
+		return;
+	}
+	
+	// 创建临时用户信息
+	const tempUser = {
+		id: userId,
+		_id: userId,
+		nickname: `用户${userId.substr(0, 6)}...`,
+		username: `用户${userId.substr(0, 6)}...`,
+		avatar: '/static/images/default-avatar.png',
+	};
+	
+	// 设置临时宠物信息
+	const tempPets = [{
+		id: 'temp-pet',
+		name: '临时宠物',
+		breed: '未知品种',
+		gender: 'unknown',
+		age: 0,
+		avatar: '/static/images/default-pet.png'
+	}];
+	
+	// 设置弹窗数据
+	selectedUser.value = tempUser;
+	selectedUserPets.value = tempPets;
+	isFollowing.value = false;
+	
+	// 显示弹窗
+	showUserPopup.value = true;
+	
+	console.log('已显示测试用户弹窗，用户ID:', userId);
+}
+
+// 替换toggleMarker函数，避免CORS错误
+function toggleMarker() {
+  try {
+    // 首先检查用户是否已登录
+    if (!checkLoginStatus()) {
+      console.log('用户未登录，不创建标记');
+      return;
+    }
+    
+    // 确保有位置信息
+    if (!currentLocation.value || typeof currentLocation.value.latitude === 'undefined') {
+      console.error('当前位置信息不可用，无法添加标记');
+      uni.showToast({
+        title: '无法获取位置信息',
+        icon: 'none'
+      });
+      return;
+    }
+    
+    // 获取用户ID - 从store中获取
+    let userId = userStore.userInfo?.id || userStore.user?._id;
+    
+    // 如果没有用户ID，不创建标记
+    if (!userId) {
+      console.log('无法获取用户ID，不创建标记');
+      return;
+    }
+    
+    console.log('使用用户ID创建标记:', userId);
+    
+    // 先移除所有现有标记，确保只有一个用户标记
+    if (map.value) {
+      const allOverlays = map.value.getAllOverlays('marker');
+      if (allOverlays && allOverlays.length > 0) {
+        console.log(`移除地图上所有 ${allOverlays.length} 个标记以避免重复`);
+        allOverlays.forEach(overlay => {
+          try {
+            map.value.remove(overlay);
+          } catch (err) {
+            console.warn('移除标记出错:', err);
+          }
+        });
+      }
+    }
+    
+    // 清空userMarkers对象
+    Object.keys(userMarkers).forEach(key => {
+      delete userMarkers[key];
+    });
+    
+    const position = [currentLocation.value.longitude, currentLocation.value.latitude];
+    
+    // 使用用户头像或默认头像
+    const avatarUrl = userAvatar.value;
+    console.log('创建用户标记，使用头像URL:', avatarUrl);
+
+    // 创建标记 - 只使用实际用户ID
+    createUserMarkerWithImage(userId, position, avatarUrl);
+    
+    console.log('已完成创建用户标记');
+  } catch (error) {
+    console.error('创建标记时出错:', error);
+    uni.showToast({
+      title: '创建位置标记失败',
+      icon: 'none'
+    });
+  }
+}
+
+// 组件挂载时
+onMounted(async () => {
+  console.log('组件挂载开始...');
+  
+  // 首先检查用户是否已登录
+  if (!checkLoginStatus()) {
+    console.log('用户未登录，不初始化地图标记');
+    // 仍然初始化地图，但不创建标记
+  } else {
+    console.log('用户已登录，继续初始化');
+  }
+  
+  // 清理可能存在的多余标记
+  setTimeout(() => {
+    cleanupExtraMarkers();
+  }, 1000);
+  
+  // 在组件挂载后启动定期检查标记
+  markerScanInterval = setInterval(() => {
+    // 只有登录用户才处理标记
+    if (userStore.isAuthenticated) {
+      setupMarkerClickHandlers();
+      
+      // 每10秒执行一次标记清理
+      if (new Date().getSeconds() % 10 === 0) {
+        cleanupExtraMarkers();
+      }
+    }
+  }, 2000); // 每2秒检查一次
+  
+  // 确保获取用户宠物数据
+  if (userStore.isAuthenticated) {
+    // 加载宠物数据
+    console.log('加载用户宠物数据');
+    petStore.fetchPets().then(pets => {
+      console.log('成功获取宠物数据:', pets);
+      // 更新myPets变量以供其他组件使用
+      myPets.value = pets;
+    }).catch(err => {
+      console.error('获取宠物数据失败:', err);
+    });
+  }
+  
+  // 开始监听位置
+  startLocationWatch();
+  
+  // 获取附近用户
+  getNearbyUsers();
+  
+  // 获取我的宠物
+  fetchMyPets();
+  
+  console.log('组件挂载完成');
+});
+
+// 使用图片创建用户标记
+async function createUserMarkerWithImage(position, userId, imageUrl) {
+	console.log('创建用户图片标记，用户ID:', userId, '图片:', imageUrl);
+	
+	// 确保地图已初始化
+	if (!map.value) {
+		console.error('地图未初始化，无法创建用户标记');
+		return null;
+	}
+	
+	// 检查必要参数
+	if (!userId) {
+		console.error('创建用户标记时缺少userId');
+		return null;
+	}
+	
+	// 使用默认位置如果没有提供
+	if (!position && currentLocation.value) {
+		position = [currentLocation.value.longitude, currentLocation.value.latitude];
+		console.log('使用当前位置创建用户标记:', position);
+	}
+	
+	// 如果没有position，则无法创建标记
+	if (!position) {
+		console.error('无法创建用户标记：位置无效');
+		return null;
+	}
+	
+	// 如果没有提供图片URL，使用默认头像
+	if (!imageUrl) {
+		console.warn('未提供图片URL，使用默认头像');
+		return createDefaultMarker(position, userId);
+	}
+	
+	// 尝试加载并处理图片
+	try {
+		// 创建临时的标记Canvas元素
+		const canvas = document.createElement('canvas');
+		canvas.width = 48;
+		canvas.height = 48;
+		const ctx = canvas.getContext('2d');
+		
+		// 创建新的图片元素
+		return new Promise((resolve, reject) => {
+			const img = new Image();
+			img.crossOrigin = 'anonymous'; // 允许跨域加载图片
+			
+			// 图片加载成功时的处理
+			img.onload = function() {
+				try {
+					// 清除画布
+					ctx.clearRect(0, 0, canvas.width, canvas.height);
+					
+					// 绘制圆形裁剪区域
+					ctx.beginPath();
+					ctx.arc(24, 24, 22, 0, 2 * Math.PI);
+					ctx.closePath();
+					ctx.clip();
+					
+					// 绘制图片
+					ctx.drawImage(img, 0, 0, 48, 48);
+					
+					// 绘制边框
+					ctx.beginPath();
+					ctx.arc(24, 24, 22, 0, 2 * Math.PI);
+					ctx.lineWidth = 2;
+					ctx.strokeStyle = '#ffffff';
+					ctx.stroke();
+					
+					// 获取Base64图片数据
+					const base64Url = canvas.toDataURL('image/png');
+					
+					// 创建标记
+					const marker = new AMap.Marker({
+						position: position,
+						icon: new AMap.Icon({
+							size: new AMap.Size(48, 48),
+							image: base64Url,
+							imageSize: new AMap.Size(48, 48)
+						}),
+						offset: new AMap.Pixel(-24, -24),
+						zIndex: 100,
+						extData: { userId: userId, type: 'user' }
+					});
+					
+					// 将标记添加到地图
+					map.value.add(marker);
+					
+					// 保存标记引用
+					userMarkers[userId] = marker;
+					
+					// 设置DOM属性和事件
+					setTimeout(() => {
+						try {
+							const dom = marker.getContentDom();
+							if (dom) {
+								dom.setAttribute('data-user-id', userId);
+								dom.setAttribute('data-id', `user-marker-${userId}`);
+								dom.addEventListener('click', () => {
+									processUserMarkerTap(userId);
+								});
+							}
+						} catch (e) {
+							console.error('设置用户标记DOM属性时出错:', e);
+						}
+					}, 100);
+					
+					// 为标记添加点击事件
+					marker.on('click', function() {
+						console.log('用户图片标记被点击，用户ID:', userId);
+						processUserMarkerTap(userId);
+					});
+					
+					console.log('成功创建用户图片标记，用户ID:', userId);
+					resolve(marker);
+				} catch (error) {
+					console.error('处理图片和创建标记时出错:', error);
+					// 出错时尝试使用默认标记
+					const defaultMarker = createDefaultMarker(position, userId);
+					resolve(defaultMarker);
+				}
+			};
+			
+			// 图片加载失败时的处理
+			img.onerror = function() {
+				console.error('加载图片失败，URL:', imageUrl);
+				// 加载失败时使用默认标记
+				const defaultMarker = createDefaultMarker(position, userId);
+				resolve(defaultMarker);
+			};
+			
+			// 开始加载图片
+			img.src = imageUrl;
+		});
+	} catch (error) {
+		console.error('创建用户图片标记出错:', error);
+		// 发生异常时使用默认标记
+		return createDefaultMarker(position, userId);
+	}
+}
+
+// 强制刷新用户标记
+function forceRefreshMarker(useForceAvatar = false) {
+	console.log('强制刷新标记, 使用强制头像:', useForceAvatar);
+	
+	// 先清理现有标记
+	forceCleanupUserMarkers();
+	
+	// 延迟创建新标记
+	setTimeout(() => {
+		if (useForceAvatar) {
+			// 如果指定使用强制头像
+			createUserMarkerWithImage(
+				[currentLocation.value.longitude, currentLocation.value.latitude],
+				userStore.userInfo?.id || 'current-user-location',
+				userAvatar.value
+			);
+		} else {
+			// 使用常规方式创建标记
+			toggleMarker();
+		}
+	}, 500);
+}
+
+// 强制清除所有用户标记
+function forceCleanupUserMarkers() {
+	console.log('强制清除所有用户标记');
+	try {
+		// 确保地图已初始化
+		if (!map.value) {
+			console.warn('地图未初始化，无法清除标记');
+			return;
+		}
+		
+		// 获取所有标记
+		const markers = map.value.getAllOverlays('marker');
+		
+		// 筛选出所有用户类型的标记
+		const userMarkers = markers.filter(marker => {
+			try {
+				const extData = marker.getExtData();
+				return extData && extData.type === 'user';
+			} catch (e) {
+				return false;
+			}
+		});
+		
+		// 移除筛选出的用户标记
+		if (userMarkers.length > 0) {
+			console.log('清除', userMarkers.length, '个用户标记');
+			userMarkers.forEach(marker => {
+				try {
+					map.value.remove(marker);
+				} catch (e) {
+					console.error('移除标记出错:', e);
+				}
+			});
+		} else {
+			console.log('没有找到用户标记');
+		}
+	} catch (error) {
+		console.error('清除用户标记时出错:', error);
+	}
+}
+
+// 返回各个变量和函数供模板使用
