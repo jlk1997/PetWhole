@@ -21,7 +21,6 @@ router.post('/pet-recognition', async (req, res) => {
       { inputs: imageData },
       {
         headers: {
-          'Authorization': 'Bearer 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', // 存储在环境变量中更安全
           'Content-Type': 'application/json'
         },
         timeout: 30000 // 30秒超时

@@ -63,6 +63,13 @@
 			}
 		},
 		{
+			"path": "pages/pet/recognition",
+			"style": {
+				"navigationBarTitleText": "宠物识别",
+				"navigationStyle": "custom"
+			}
+		},
+		{
 			"path": "pages/community/my-posts",
 			"style": {
 				"navigationBarTitleText": "我的动态",

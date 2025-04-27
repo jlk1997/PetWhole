@@ -75,6 +75,12 @@
 				<view class="arrow-icon"></view>
 			</view>
 			
+			<view class="menu-item" @click="openPetRecognition">
+				<view class="menu-icon pet-icon"></view>
+				<text class="menu-text">宠物识别</text>
+				<view class="arrow-icon"></view>
+			</view>
+			
 			<view class="menu-item" @click="navTo('/pages/profile/settings')">
 				<view class="menu-icon settings-icon"></view>
 				<text class="menu-text">设置</text>
@@ -516,6 +522,18 @@ watch(() => userStore.user, (newUser) => {
 watch(() => petStore.pets, (newPets) => {
 	console.log('Pet list updated, total pets:', newPets.length);
 }, { deep: true });
+
+/**
+ * Open pet recognition
+ */
+function openPetRecognition() {
+	if (!userStore.isAuthenticated) {
+		showToast('请先登录');
+		return;
+	}
+	
+	navigateTo('/pages/pet/recognition');
+}
 </script>
 
 <style>
