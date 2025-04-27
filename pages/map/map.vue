@@ -1,4 +1,4 @@
-<template>
+﻿<template>
 	<view class="content map-container">
 		<!-- 调试信息面板 -->
 		<view v-if="showDebug" class="debug-info">
@@ -53,6 +53,10 @@
 			<view class="toolbar-item" @tap="zoomOut">
 				<text class="icon">➖</text>
 				<text class="toolbar-text">缩小</text>
+			</view>
+			<view class="toolbar-item pet-identify" @tap="navigateToPetIdentify">
+				<text class="icon">🔍</text>
+				<text class="toolbar-text">识别</text>
 			</view>
 		</view>
 		
@@ -3426,7 +3430,13 @@ export default {
 			reloadUserInfo,
 			clearAvatarCache,
 			onMapContainerClick,
-			selectUserMarker
+			selectUserMarker,
+			// 在methods对象中添加导航方法
+			navigateToPetIdentify() {
+				uni.navigateTo({
+					url: '/pages/petIdentify/index'
+				});
+			},
 		};
 	}
 }
@@ -3864,6 +3874,11 @@ img.marker-image {
 .amap-markers .amap-marker {
     cursor: pointer !important;
     pointer-events: auto !important;
+}
+
+/* 宠物识别按钮样式 */
+.pet-identify {
+	background-color: rgba(255, 127, 80, 0.8);
 }
 </style>
 

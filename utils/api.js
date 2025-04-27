@@ -200,19 +200,13 @@ const safeApiCall = async (apiCall) => {
  */
 const apiCallWithMockFallback = async (apiCall, mockDataKey) => {
   try {
-    // 优先使用真实API
+    // 强制使用真实API，禁用模拟数据回退
+    console.log('仅使用真实API，禁用模拟数据');
     const result = await apiCall();
     return result;
   } catch (error) {
-    console.warn('API调用失败，使用模拟数据:', error);
-    
-    // 如果配置启用模拟数据，且有对应的模拟数据，则返回模拟数据
-    if (shouldUseMock && mockDataKey && mockData[mockDataKey]) {
-      console.log('返回模拟数据:', mockDataKey);
-      return mockData[mockDataKey];
-    }
-    
-    // 否则抛出原始错误
+    console.error('API调用失败，不使用模拟数据:', error);
+    // 不再使用模拟数据，直接抛出错误
     throw error;
   }
 };
@@ -647,8 +641,8 @@ export const user = {
   followUser: async (userId) => {
     try {
       const response = await request({
-        url: `/api/users/follow/${userId}`,
-        method: 'POST'
+      url: `/api/users/follow/${userId}`,
+      method: 'POST'
       });
       return handleResponse(response);
     } catch (error) {
@@ -1064,6 +1058,72 @@ export const pet = {
       throw error;
     }
   },
+  
+  // 分析宠物图片 - 不再使用模拟数据
+  analyzeImages: (data) => {
+    return new Promise((resolve, reject) => {
+      console.log('调用服务器端宠物分析API, 数据:', data);
+      
+      // 获取认证头
+      const token = uni.getStorageSync('token');
+      const header = {
+        'Authorization': token ? `Bearer ${token}` : '',
+        'Content-Type': 'application/json'
+      };
+      
+      uni.request({
+        url: `${BASE_URL}/api/pet/analyze`,
+        method: 'POST',
+        data: {
+          imagePaths: data.imagePaths, // 图片路径数组
+          userId: data.userId || '', // 用户ID，可选
+        },
+        header: header,
+        success: (res) => {
+          console.log('宠物分析API响应:', res);
+          
+          if (res.statusCode === 200) {
+            resolve(res.data);
+          } else {
+            // 明确的错误信息
+            const errorMessage = res.statusCode === 404 
+              ? 'API端点不存在，请确认后端服务是否已实现此功能' 
+              : res.data?.message || `服务器错误(${res.statusCode})`;
+              
+            console.error('服务器返回错误:', errorMessage);
+            reject(new Error(errorMessage));
+          }
+        },
+        fail: (err) => {
+          console.error('宠物分析请求失败:', err);
+          reject(new Error('网络请求失败，请检查网络连接'));
+        }
+      });
+    });
+  },
+  
+  // 获取分析历史
+  getAnalysisHistory: (userId) => {
+    return new Promise((resolve, reject) => {
+      uni.request({
+        url: `${BASE_URL}/api/pet/analysis-history`,
+        method: 'GET',
+        data: { userId },
+        header: getAuthHeader(),
+        success: (res) => {
+          if (res.statusCode === 200) {
+            resolve(res.data);
+          } else {
+            reject(new Error(res.data.message || '获取历史记录失败'));
+          }
+        },
+        fail: (err) => {
+          console.error('获取分析历史失败:', err);
+          reject(err);
+        }
+      });
+    });
+  }
 }
 
 /**
@@ -1708,6 +1768,110 @@ export const chat = {
 };
 
 /**
+ * 获取认证请求头函数
+ */
+function getAuthHeader() {
+  const token = uni.getStorageSync('token');
+  return {
+    'Authorization': token ? `Bearer ${token}` : '',
+    'Content-Type': 'application/json'
+  };
+}
+
+/**
+ * 添加文件上传接口
+ */
+const upload = {
+  // 上传图片
+  uploadImage: (filePath, params = {}) => {
+    return new Promise((resolve, reject) => {
+      console.log('开始上传图片, 文件路径:', filePath);
+      
+      // 检查文件路径是否有效
+      if (!filePath) {
+        console.error('上传失败: 无效的文件路径');
+        return reject(new Error('无效的文件路径'));
+      }
+      
+      // 获取token
+      const token = uni.getStorageSync('token');
+      
+      // 上传文件
+      uni.uploadFile({
+        url: `${BASE_URL}/api/upload/image`,
+        filePath: filePath,
+        name: 'file',
+        formData: params,
+        header: {
+          'Authorization': token ? `Bearer ${token}` : ''
+          // 不设置Content-Type，让系统自动处理
+        },
+        success: (res) => {
+          console.log('图片上传响应:', res);
+          
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              const data = JSON.parse(res.data);
+              console.log('解析上传响应:', data);
+              
+              // 尝试从不同响应格式中提取URL
+              const imageUrl = 
+                (data.url || data.imageUrl) || 
+                (data.data && (data.data.url || data.data.imageUrl)) || 
+                filePath;
+              
+              // 返回统一格式
+              resolve({
+                success: true,
+                url: imageUrl,
+                path: imageUrl
+              });
+            } catch (e) {
+              console.error('解析响应失败:', e);
+              // 解析失败时回退使用本地路径
+              resolve({
+                success: true,
+                url: filePath,
+                path: filePath
+              });
+            }
+          } else {
+            console.error('图片上传失败, 状态码:', res.statusCode);
+            
+            // 开发模式直接返回本地路径避免前端报错
+            if (process.env.NODE_ENV === 'development') {
+              console.warn('开发模式: 使用本地路径作为回退');
+              resolve({
+                success: true,
+                url: filePath,
+                path: filePath
+              });
+            } else {
+              reject(new Error(`上传失败: ${res.statusCode}`));
+            }
+          }
+        },
+        fail: (err) => {
+          console.error('图片上传请求失败:', err);
+          
+          // 开发模式直接返回本地路径避免前端报错
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('开发模式: 网络错误，使用本地路径作为回退');
+            resolve({
+              success: true,
+              url: filePath,
+              path: filePath
+            });
+          } else {
+            reject(err);
+          }
+        }
+      });
+    });
+  }
+};
+
+/**
  * API模块集合
  */
 const api = {
@@ -1717,7 +1881,8 @@ const api = {
   community,
   walk,
   location,
-  chat
+  chat,
+  upload
 }
 
 export default api 

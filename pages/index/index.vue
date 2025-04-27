@@ -250,7 +250,7 @@ async function changeAvatar() {
 	try {
 		const res = await new Promise((resolve, reject) => {
 			uni.chooseImage({
-				count: 1,
+				count: 6,
 				sizeType: ['compressed'],
 				sourceType: ['album', 'camera'],
 				success: resolve,
@@ -258,14 +258,14 @@ async function changeAvatar() {
 			});
 		});
 		
-		const tempFilePath = res.tempFilePaths[0];
+		const tempFilePaths = res.tempFilePaths;
 		
 		showToast('上传中...');
 		
 		// 上传头像
 		try {
 			// 调用上传API
-			const uploadResult = await userStore.uploadAvatar(tempFilePath);
+			const uploadResult = await userStore.uploadAvatar(tempFilePaths);
 			
 			if (uploadResult && (uploadResult.avatar || (uploadResult.data && uploadResult.data.avatar))) {
 				showToast('头像上传成功');

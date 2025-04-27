@@ -15,14 +15,14 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
-    // 取消代理配置，避免干扰本地文件
-    // proxy: {
-    //   '/api': {
-    //     target: 'http://localhost:5000',
-    //     changeOrigin: true,
-    //     secure: false
-    //   }
-    // }
+    // 启用代理配置，将/api请求转发到后端
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false
+      }
+    }
   },
   build: {
     target: 'es2015',

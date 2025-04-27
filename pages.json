@@ -118,6 +118,16 @@
 				"navigationBarTitleText": "聊天",
 				"enablePullDownRefresh": false
 			}
+		},
+		{
+			"path": "pages/petIdentify/index",
+			"style": {
+				"navigationStyle": "custom",
+				"app-plus": {
+					"titleNView": false,
+					"bounce": "none"
+				}
+			}
 		}
 	],
 	"globalStyle": {
