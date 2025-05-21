@@ -6,8 +6,8 @@ const path = require('path');
 
 // Helper function to generate JWT token
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: '30d'
+  return jwt.sign({ id }, process.env.JWT_SECRET || 'your_jwt_secret_key_for_users', {
+    expiresIn: process.env.JWT_EXPIRE || '30d'
   });
 };
 

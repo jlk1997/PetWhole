@@ -1,6 +1,9 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+// 使用固定的JWT密钥，确保一致性
+const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key_for_users';
+
 /**
  * 验证用户是否已登录
  */
@@ -39,7 +42,7 @@ exports.auth = async (req, res, next) => {
   
   try {
     // 验证token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret_key');
+    const decoded = jwt.verify(token, JWT_SECRET);
     
     // 获取用户信息
     const user = await User.findById(decoded.id);
@@ -77,7 +80,7 @@ exports.optionalAuth = async (req, res, next) => {
     }
     
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
     
     // Find user by id
     const user = await User.findById(decoded.id).select('-password');

@@ -6,12 +6,14 @@ const crypto = require('crypto');
 // 导入各个模块的路由
 const locationRoutes = require('./locationRoutes');
 const chatRoutes = require('./chatRoutes');
+const markerRoutes = require('./markerRoutes');
 // const userRoutes = require('./userRoutes');
 // const petRoutes = require('./petRoutes');
 
 // 注册路由
 router.use('/locations', locationRoutes);
 router.use('/chat', chatRoutes);
+router.use('/markers', markerRoutes);
 // router.use('/users', userRoutes);
 // router.use('/pets', petRoutes);
 

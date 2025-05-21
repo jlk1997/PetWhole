@@ -49,6 +49,30 @@ const petSchema = new mongoose.Schema({
   traits: [{
     type: String
   }],
+  socialIntention: {
+    type: String,
+    enum: ['strong', 'medium', 'mild'],
+    default: 'medium'
+  },
+  matingStatus: {
+    type: String,
+    enum: ['single', 'paired', 'notLooking'],
+    default: 'notLooking'
+  },
+  dailyPhotos: [{
+    url: {
+      type: String,
+      required: true
+    },
+    uploadDate: {
+      type: Date,
+      default: Date.now
+    },
+    description: {
+      type: String,
+      default: ''
+    }
+  }],
   createdAt: {
     type: Date,
     default: Date.now
