@@ -39,9 +39,9 @@
 
 <script>
 import { ref, onMounted } from 'vue';
-import { usePetStore } from '@/stores/pet';
-import { useUserStore } from '@/stores/user';
-import api from '@/api';
+import { usePetStore } from '@/store/petStore';
+import { useUserStore } from '@/store/userStore';
+import api from '@/utils/api';
 
 export default {
   setup() {
@@ -225,13 +225,13 @@ export default {
       
       // 如果是相对路径，补充基础URL
       if (url.startsWith('/uploads')) {
-        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
         return BASE_URL + url;
       }
       
       // 如果是uploads路径但没有前导斜杠
       if (url.startsWith('uploads/')) {
-        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
         return BASE_URL + '/' + url;
       }
       

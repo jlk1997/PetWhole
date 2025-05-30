@@ -69,9 +69,39 @@
               <text class="attribute-label">性别</text>
               <text class="attribute-value">{{formatPetGender(selectedPet?.gender)}}</text>
             </view>
+            <view class="pet-attribute" v-if="selectedPet?.socialIntention">
+              <text class="attribute-label">社交意向</text>
+              <text class="attribute-value">{{formatSocialIntention(selectedPet?.socialIntention)}}</text>
+            </view>
+            <view class="pet-attribute" v-if="selectedPet?.matingStatus">
+              <text class="attribute-label">求偶状态</text>
+              <text class="attribute-value">{{formatMatingStatus(selectedPet?.matingStatus)}}</text>
+            </view>
+          </view>
+          
+          <!-- 日常照片展示 -->
+          <view class="pet-daily-photos" v-if="selectedPet?.dailyPhotos && selectedPet.dailyPhotos.length > 0">
+            <text class="daily-photos-title">日常照片</text>
+            <scroll-view class="photos-scroll" scroll-x>
+              <view class="photos-container">
+                <view 
+                  v-for="(photo, index) in selectedPet.dailyPhotos" 
+                  :key="index" 
+                  class="daily-photo-item"
+                  @click="previewPhoto(photo.url)"
+                >
+                  <image 
+                    class="daily-photo" 
+                    :src="formatImageUrl(photo.url)" 
+                    mode="aspectFill"
+                  ></image>
+                </view>
+              </view>
+            </scroll-view>
           </view>
           
           <view class="pet-description" v-if="selectedPet?.description">
+            <text class="description-title">个性介绍</text>
             <text class="description-text">{{selectedPet?.description}}</text>
           </view>
         </view>
@@ -404,18 +434,47 @@ export default {
       
       // 如果是相对路径，补充基础URL
       if (url.startsWith('/uploads')) {
-        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
         return BASE_URL + url;
       }
       
       // 如果是uploads路径但没有前导斜杠
       if (url.startsWith('uploads/')) {
-        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
         return BASE_URL + '/' + url;
       }
       
       // 其他情况，使用默认头像
       return '/static/images/default-avatar.png';
+    },
+    
+    // 格式化社交意向
+    formatSocialIntention(intention) {
+      const intentionMap = {
+        'strong': '强烈',
+        'medium': '较强',
+        'mild': '平淡'
+      };
+      return intentionMap[intention] || '未知';
+    },
+    
+    // 格式化求偶状态
+    formatMatingStatus(status) {
+      const statusMap = {
+        'single': '单身待求偶',
+        'paired': '有配偶',
+        'notLooking': '暂不找配偶'
+      };
+      return statusMap[status] || '未知';
+    },
+    
+    // 预览照片
+    previewPhoto(url) {
+      const formattedUrl = this.formatImageUrl(url);
+      uni.previewImage({
+        urls: [formattedUrl],
+        current: formattedUrl
+      });
     }
   }
 }
@@ -658,14 +717,23 @@ export default {
 }
 
 .pet-description {
-  padding: 10rpx;
-  border-top: 1rpx solid #eee;
-  padding-top: 15rpx;
+  margin-top: 20rpx;
+  padding: 16rpx;
+  background-color: #f9f9f9;
+  border-radius: 12rpx;
+}
+
+.description-title {
+  font-size: 28rpx;
+  color: #666;
+  margin-bottom: 10rpx;
+  display: block;
+  font-weight: bold;
 }
 
 .description-text {
   font-size: 26rpx;
-  color: #666;
+  color: #333;
   line-height: 1.5;
 }
 
@@ -756,5 +824,41 @@ export default {
   padding: 10rpx 20rpx;
   border-radius: 40rpx;
   font-size: 28rpx;
+}
+
+/* 日常照片样式 */
+.pet-daily-photos {
+  margin-top: 20rpx;
+}
+
+.daily-photos-title {
+  font-size: 24rpx;
+  color: #666;
+  margin-bottom: 10rpx;
+  display: block;
+}
+
+.photos-scroll {
+  width: 100%;
+  white-space: nowrap;
+}
+
+.photos-container {
+  display: inline-flex;
+  padding: 10rpx 0;
+}
+
+.daily-photo-item {
+  margin-right: 16rpx;
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 8rpx;
+  overflow: hidden;
+}
+
+.daily-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 </style> 

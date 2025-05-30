@@ -226,7 +226,7 @@ export default {
       
       // 如果是相对路径，补充基础URL
       if (url.startsWith('/uploads')) {
-        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
         return BASE_URL + url;
       }
       

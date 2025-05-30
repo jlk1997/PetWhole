@@ -63,7 +63,7 @@ import { showToast, showLoading, hideLoading } from '@/utils/ui.js';
 const isFirstLogin = ref(false);
 const userStore = useUserStore();
 const avatarLoading = ref(false);
-const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const apiBaseUrl = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
 
 // 处理头像显示URL
 const displayAvatar = computed(() => {

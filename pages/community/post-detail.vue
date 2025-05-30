@@ -533,7 +533,7 @@ export default {
 			// 如果是相对路径（如/uploads/avatars/xxx），补充基础URL
 			if (url.startsWith('/uploads')) {
 				// 在实际环境中获取BASE_URL
-				const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+				const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
 				console.log('处理相对路径头像URL:', url, '补充基础URL:', BASE_URL);
 				return BASE_URL + url;
 			}
@@ -562,7 +562,7 @@ export default {
 			
 			// 如果是相对路径，补充基础URL
 			if (url.startsWith('/uploads')) {
-				const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+				const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
 				const fullUrl = BASE_URL + url;
 				console.log('处理相对路径图片URL:', url, '补充基础URL:', BASE_URL, '完整URL:', fullUrl);
 				return fullUrl;

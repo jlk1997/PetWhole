@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import postApi from '@/api/post'
+import { community } from '@/utils/api'
 
 export const usePostStore = defineStore('post', {
   state: () => ({
@@ -26,7 +26,7 @@ export const usePostStore = defineStore('post', {
           ...params
         }
         
-        const response = await postApi.getPosts(queryParams)
+        const response = await community.getPosts(queryParams)
         
         // 如果是第一页或者是刷新，直接替换列表
         if (queryParams.page === 1 || params.refresh) {
@@ -69,7 +69,7 @@ export const usePostStore = defineStore('post', {
         this.loading = true
         this.error = null
         
-        const response = await postApi.getPostById(id)
+        const response = await community.getPostById(id)
         this.currentPost = response.data
         
         return response.data
@@ -88,7 +88,7 @@ export const usePostStore = defineStore('post', {
         this.loading = true
         this.error = null
         
-        const response = await postApi.createPost(postData)
+        const response = await community.createPost(postData)
         
         // 添加到列表开头
         this.posts.unshift(response.data)
@@ -109,7 +109,7 @@ export const usePostStore = defineStore('post', {
         this.loading = true
         this.error = null
         
-        const response = await postApi.updatePost(id, postData)
+        const response = await community.updatePost(id, postData)
         
         // 更新列表中的帖子
         const index = this.posts.findIndex(post => post._id === id)
@@ -138,7 +138,7 @@ export const usePostStore = defineStore('post', {
         this.loading = true
         this.error = null
         
-        await postApi.deletePost(id)
+        await community.deletePost(id)
         
         // 从列表中移除帖子
         this.posts = this.posts.filter(post => post._id !== id)
@@ -162,7 +162,7 @@ export const usePostStore = defineStore('post', {
     async likePost(id) {
       try {
         this.error = null
-        const response = await postApi.likePost(id)
+        const response = await community.likePost(id)
         
         // 更新帖子点赞状态
         this.updatePostLikeStatus(id, true)
@@ -179,7 +179,7 @@ export const usePostStore = defineStore('post', {
     async unlikePost(id) {
       try {
         this.error = null
-        const response = await postApi.unlikePost(id)
+        const response = await community.unlikePost(id)
         
         // 更新帖子点赞状态
         this.updatePostLikeStatus(id, false)
@@ -217,7 +217,7 @@ export const usePostStore = defineStore('post', {
     async createComment(postId, commentData) {
       try {
         this.error = null
-        const response = await postApi.createComment(postId, commentData)
+        const response = await community.createComment(postId, commentData)
         
         // 更新评论数量
         this.updatePostCommentCount(postId, 1)
@@ -234,7 +234,7 @@ export const usePostStore = defineStore('post', {
     async deleteComment(postId, commentId) {
       try {
         this.error = null
-        await postApi.deleteComment(postId, commentId)
+        await community.deleteComment(postId, commentId)
         
         // 更新评论数量
         this.updatePostCommentCount(postId, -1)
@@ -270,7 +270,7 @@ export const usePostStore = defineStore('post', {
         this.loading = true
         this.error = null
         
-        const response = await postApi.uploadPostImage(postId, filePath)
+        const response = await community.uploadPostImage(postId, filePath)
         return response.data
       } catch (error) {
         console.error('上传帖子图片失败:', error)
@@ -293,7 +293,7 @@ export const usePostStore = defineStore('post', {
           ...params
         }
         
-        const response = await postApi.getUserPosts(userId, queryParams)
+        const response = await community.getUserPosts(userId, queryParams)
         
         if (queryParams.page === 1 || params.refresh) {
           this.posts = response.data.posts
@@ -327,7 +327,7 @@ export const usePostStore = defineStore('post', {
           ...params
         }
         
-        const response = await postApi.getMyPosts(queryParams)
+        const response = await community.getMyPosts(queryParams)
         
         if (queryParams.page === 1 || params.refresh) {
           this.posts = response.data.posts

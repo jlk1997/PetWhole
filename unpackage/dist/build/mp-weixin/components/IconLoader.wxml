@@ -1,0 +1,1 @@
+<view wx:if="{{a}}" class="icon-update-notification data-v-f9a36ccb"><view class="icon-update-content data-v-f9a36ccb" bindtap="{{c}}"><text class="icon-update-text data-v-f9a36ccb">发现图标更新，点击应用</text><view class="icon-update-badge data-v-f9a36ccb">{{b}}</view></view></view>

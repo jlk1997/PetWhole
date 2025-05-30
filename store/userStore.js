@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { userApi } from '@/utils/api'
+import { auth, user } from '@/utils/api'
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -26,7 +26,7 @@ export const useUserStore = defineStore('user', {
       try {
         this.loading = true
         this.error = null
-        const response = await userApi.register(userData)
+        const response = await auth.register(userData)
         
         // 检查响应格式
         if (!response || !response.token) {
@@ -64,7 +64,7 @@ export const useUserStore = defineStore('user', {
         this.error = null
         
         // 发出登录请求
-        const response = await userApi.login(credentials)
+        const response = await auth.login(credentials)
         
         console.log('登录响应:', response)
         
@@ -108,7 +108,7 @@ export const useUserStore = defineStore('user', {
         this.loading = true
         this.error = null
         
-        const response = await userApi.getUserInfo()
+        const response = await user.getCurrentUser()
         
         // 检查响应格式
         if (!response) {
@@ -153,7 +153,7 @@ export const useUserStore = defineStore('user', {
       
       try {
         this.loading = true
-        const response = await userApi.getUserStats()
+        const response = await user.getUserStats()
         this.userStats = response
         return response
       } catch (error) {
@@ -170,7 +170,7 @@ export const useUserStore = defineStore('user', {
       
       try {
         this.loading = true
-        const response = await userApi.getFollowing()
+        const response = await user.getFollowing()
         this.followingUsers = response
         return response
       } catch (error) {
@@ -187,7 +187,7 @@ export const useUserStore = defineStore('user', {
       
       try {
         this.loading = true
-        const response = await userApi.getFollowers()
+        const response = await user.getFollowers()
         this.followerUsers = response
         return response
       } catch (error) {
@@ -202,7 +202,7 @@ export const useUserStore = defineStore('user', {
     async uploadAvatar(filePath) {
       try {
         this.loading = true
-        const response = await userApi.uploadAvatar(filePath)
+        const response = await user.uploadAvatar(filePath)
         
         // 更新用户信息中的头像
         if (this.userInfo) {

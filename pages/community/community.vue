@@ -78,13 +78,11 @@
 					
 					<view class="post-footer">
 						<view class="action-item" @tap.stop="likePost(post, index)">
-							<view class="action-icon like-icon" :class="{'active': post.isLiked}" 
-								style="background-image: url('/static/images/like-icon.png'); background-size: contain; background-repeat: no-repeat;"></view>
+							<view class="action-icon like-icon" :class="{'active': post.isLiked}"></view>
 							<text class="action-text">点赞 {{ getNumberValue(post.likes) }}</text>
 						</view>
 						<view class="action-item" @tap.stop="viewComments(post)">
-							<view class="action-icon comment-icon" 
-								style="background-image: url('/static/images/comment-icon.png'); background-size: contain; background-repeat: no-repeat;"></view>
+							<view class="action-icon comment-icon"></view>
 							<text class="action-text">评论 {{ getNumberValue(post.comments) }}</text>
 						</view>
 					</view>
@@ -429,7 +427,7 @@ export default {
 			// 如果是相对路径（如/uploads/avatars/xxx），补充基础URL
 			if (url.startsWith('/uploads')) {
 				// 在实际环境中获取BASE_URL
-				const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+				const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
 				return BASE_URL + url;
 			}
 			
@@ -728,7 +726,7 @@ export default {
 			
 			// 如果是相对路径，补充基础URL
 			if (url.startsWith('/uploads')) {
-				const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+				const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
 				const fullUrl = BASE_URL + url;
 				console.log('处理相对路径图片URL:', url, '补充基础URL:', BASE_URL, '完整URL:', fullUrl);
 				return fullUrl;
@@ -1375,7 +1373,16 @@ export default {
 	width: 40rpx;
 	height: 40rpx;
 	margin-right: 10rpx;
-	background-color: #ccc;
+	background-size: contain;
+	background-repeat: no-repeat;
+}
+
+.like-icon {
+	background-image: url('../../static/images/pet-marker.png');
+}
+
+.comment-icon {
+	background-image: url('../../static/images/chat-icon.png');
 }
 
 .action-icon.active {

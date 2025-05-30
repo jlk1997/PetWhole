@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import walkApi from '@/api/walk'
+import { walk } from '@/utils/api'
 import { useUserStore } from './user'
 import { usePetStore } from './pet'
 
@@ -82,7 +82,7 @@ export const useWalkStore = defineStore('walk', {
           ...params
         }
         
-        const response = await walkApi.getWalkRecords(queryParams)
+        const response = await walk.getWalkRecords(queryParams)
         
         // 如果是第一页或者是刷新，直接替换列表
         if (queryParams.page === 1 || params.refresh) {
@@ -125,7 +125,7 @@ export const useWalkStore = defineStore('walk', {
         this.loading = true
         this.error = null
         
-        const response = await walkApi.getWalkRecordById(id)
+        const response = await walk.getWalkRecordById(id)
         this.currentWalk = response.data
         
         return response.data
@@ -144,7 +144,7 @@ export const useWalkStore = defineStore('walk', {
         this.loading = true
         this.error = null
         
-        const response = await walkApi.createWalkRecord(walkData)
+        const response = await walk.createWalkRecord(walkData)
         
         // 添加到列表开头
         this.walkRecords.unshift(response.data)
@@ -171,7 +171,7 @@ export const useWalkStore = defineStore('walk', {
         this.loading = true
         this.error = null
         
-        const response = await walkApi.updateWalkRecord(id, walkData)
+        const response = await walk.updateWalkRecord(id, walkData)
         
         // 更新列表中的记录
         const index = this.walkRecords.findIndex(record => record._id === id)
@@ -200,7 +200,7 @@ export const useWalkStore = defineStore('walk', {
         this.loading = true
         this.error = null
         
-        await walkApi.deleteWalkRecord(id)
+        await walk.deleteWalkRecord(id)
         
         // 从列表中移除记录
         this.walkRecords = this.walkRecords.filter(record => record._id !== id)
@@ -229,7 +229,7 @@ export const useWalkStore = defineStore('walk', {
         this.loading = true
         this.error = null
         
-        const response = await walkApi.uploadWalkPhoto(walkId, filePath)
+        const response = await walk.uploadWalkPhoto(walkId, filePath)
         
         // 更新记录数据
         await this.fetchWalkRecordById(walkId)
@@ -257,7 +257,7 @@ export const useWalkStore = defineStore('walk', {
           return null
         }
         
-        const response = await walkApi.getUserWalkStats(id)
+        const response = await walk.getUserWalkStats(id)
         this.stats = response.data
         
         return response.data
@@ -276,7 +276,7 @@ export const useWalkStore = defineStore('walk', {
         this.loading = true
         this.error = null
         
-        const response = await walkApi.getNearbyWalks(params)
+        const response = await walk.getNearbyWalks(params)
         this.nearbyWalks = response.data
         
         return response.data

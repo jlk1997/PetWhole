@@ -1,0 +1,66 @@
+{
+  "pages": [
+    "pages/login/login",
+    "pages/login/register",
+    "pages/map/map",
+    "pages/community/community",
+    "pages/index/index",
+    "pages/community/create",
+    "pages/community/post-detail",
+    "pages/pet/management",
+    "pages/pet/edit",
+    "pages/pet/recognition",
+    "pages/community/my-posts",
+    "pages/walk/history",
+    "pages/profile/settings",
+    "pages/profile/profile",
+    "pages/profile/following",
+    "pages/profile/followers",
+    "pages/chat/chat",
+    "pages/chat/index",
+    "pages/map/add-marker",
+    "pages/map/marker-detail",
+    "pages/petIdentify/index",
+    "pages/profile/my-markers",
+    "pages/ai-medical/index"
+  ],
+  "window": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "DogRun",
+    "navigationBarBackgroundColor": "#F8F8F8",
+    "backgroundColor": "#F8F8F8"
+  },
+  "tabBar": {
+    "color": "#7A7E83",
+    "selectedColor": "#3cc51f",
+    "borderStyle": "black",
+    "backgroundColor": "#ffffff",
+    "list": [
+      {
+        "pagePath": "pages/map/map",
+        "text": "遛狗",
+        "iconPath": "static/images/map-icon.png",
+        "selectedIconPath": "static/images/map-icon-active.png"
+      },
+      {
+        "pagePath": "pages/community/community",
+        "text": "社区",
+        "iconPath": "static/images/community-icon.png",
+        "selectedIconPath": "static/images/community-icon-active.png"
+      },
+      {
+        "pagePath": "pages/chat/index",
+        "iconPath": "static/images/chat-icon.png",
+        "selectedIconPath": "static/images/chat-icon-active.png",
+        "text": "聊天"
+      },
+      {
+        "pagePath": "pages/index/index",
+        "text": "我的",
+        "iconPath": "static/images/profile-icon.png",
+        "selectedIconPath": "static/images/profile-icon-active.png"
+      }
+    ]
+  },
+  "usingComponents": {}
+}

@@ -80,7 +80,7 @@ export default {
       
       // 如果是相对路径，补充基础URL
       if (url.startsWith('/uploads')) {
-        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
         const fullUrl = BASE_URL + url;
         console.log('处理相对路径图片URL:', url, '补充基础URL:', BASE_URL, '完整URL:', fullUrl);
         return fullUrl;

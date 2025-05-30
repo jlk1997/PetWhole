@@ -82,7 +82,7 @@ const adminApp = express();
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5001', 'http://localhost:5173'],
+  origin: ['http://localhost:3000', 'http://49.235.65.37:5001', 'http://localhost:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -93,7 +93,7 @@ app.use(morgan('dev'));
 
 // 管理后台中间件
 adminApp.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5001', 'http://localhost:5173'],
+  origin: ['http://localhost:3000', 'http://49.235.65.37:5001', 'http://localhost:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -316,7 +316,7 @@ adminApp.use((err, req, res, next) => {
 
 // Connect to MongoDB and start server
 mongoose
-  .connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/dogrun', {
+  .connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/liuchongpai', {
     useNewUrlParser: true,
     useUnifiedTopology: true
   })

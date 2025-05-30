@@ -97,6 +97,10 @@ export const usePetStore = defineStore('pet', {
       // 先从本地列表查找
       const localPet = this.pets.find(pet => pet.id === id || pet._id === id)
       if (localPet) {
+        // 修复：确保localPet.dailyPhotos中的URL格式正确
+        if (localPet.dailyPhotos && Array.isArray(localPet.dailyPhotos)) {
+          console.log('从本地获取宠物信息，处理照片URL');
+        }
         return localPet
       }
       
@@ -107,6 +111,10 @@ export const usePetStore = defineStore('pet', {
         const response = await api.pet.getPetById(id)
         
         if (response) {
+          // 修复：确保response.dailyPhotos中的URL格式正确
+          if (response.dailyPhotos && Array.isArray(response.dailyPhotos)) {
+            console.log('从API获取宠物信息，处理照片URL:', response.dailyPhotos.length);
+          }
           return response
         }
         return null
@@ -302,6 +310,131 @@ export const usePetStore = defineStore('pet', {
       } catch (error) {
         console.error('添加宠物失败:', error);
         this.error = '添加宠物失败';
+        throw error;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    // 添加宠物的日常照片
+    async uploadPetDailyPhoto(petId, photoPath) {
+      this.loading = true;
+      this.error = null;
+      
+      try {
+        console.log('上传宠物日常照片:', petId, photoPath);
+        
+        // 获取基础URL
+        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
+        const uploadUrl = `${BASE_URL}/api/pets/${petId}/daily-photo`;
+        const token = uni.getStorageSync('token');
+        
+        // 处理blob URL - 使用canvas转换为base64，然后以JSON格式发送
+        if (photoPath.startsWith('blob:')) {
+          return new Promise((resolve, reject) => {
+            try {
+              console.log('处理blob URL:', photoPath);
+              
+              // 通过Canvas转换
+              const img = new Image();
+              img.crossOrigin = 'anonymous';
+              img.onload = () => {
+                try {
+                  const canvas = document.createElement('canvas');
+                  canvas.width = img.width;
+                  canvas.height = img.height;
+                  const ctx = canvas.getContext('2d');
+                  ctx.drawImage(img, 0, 0);
+                  
+                  // 转为base64编码字符串
+                  const base64Data = canvas.toDataURL('image/jpeg', 0.9);
+                  console.log('转换完成，准备发送base64数据');
+                  
+                  // 使用普通JSON格式发送，避开multipart/form-data的问题
+                  fetch(uploadUrl, {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${token}`,
+                      'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                      imageData: base64Data,
+                      description: ''
+                    })
+                  })
+                  .then(response => {
+                    if (!response.ok) {
+                      throw new Error(`上传失败: ${response.status}`);
+                    }
+                    return response.json();
+                  })
+                  .then(data => {
+                    console.log('上传成功:', data);
+                    resolve(data);
+                  })
+                  .catch(error => {
+                    console.error('上传错误:', error);
+                    reject(error);
+                  });
+                } catch (e) {
+                  console.error('Canvas处理失败:', e);
+                  reject(e);
+                }
+              };
+              
+              img.onerror = (e) => {
+                console.error('图片加载失败:', e);
+                reject(new Error('图片加载失败'));
+              };
+              
+              img.src = photoPath;
+            } catch (e) {
+              console.error('处理blob URL失败:', e);
+              reject(e);
+            }
+          });
+        } else {
+          // 对于本地文件路径，保持使用uni.uploadFile
+          return new Promise((resolve, reject) => {
+            console.log('处理本地文件路径:', photoPath);
+            
+            uni.uploadFile({
+              url: uploadUrl,
+              filePath: photoPath,
+              name: 'photo',
+              header: {
+                'Authorization': `Bearer ${token}`
+              },
+              success: (uploadRes) => {
+                console.log('照片上传成功:', uploadRes);
+                
+                let result;
+                try {
+                  if (typeof uploadRes.data === 'string') {
+                    result = JSON.parse(uploadRes.data);
+                  } else {
+                    result = uploadRes.data;
+                  }
+                  
+                  resolve(result);
+                } catch (parseError) {
+                  console.error('解析上传响应失败:', parseError);
+                  reject(parseError);
+                }
+              },
+              fail: (error) => {
+                console.error('照片上传失败:', error);
+                reject(error);
+              },
+              complete: () => {
+                this.loading = false;
+              }
+            });
+          });
+        }
+      } catch (error) {
+        console.error('上传宠物日常照片失败:', error);
+        this.error = error.message || '上传宠物日常照片失败';
         throw error;
       } finally {
         this.loading = false;

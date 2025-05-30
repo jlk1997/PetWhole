@@ -75,6 +75,12 @@
 				<view class="arrow-icon"></view>
 			</view>
 			
+			<view class="menu-item" @click="navTo('/pages/profile/my-markers')">
+				<view class="menu-icon map-icon"></view>
+				<text class="menu-text">我的标记</text>
+				<view class="arrow-icon"></view>
+			</view>
+			
 			<view class="menu-item" @click="openPetRecognition">
 				<view class="menu-icon pet-icon"></view>
 				<text class="menu-text">宠物识别</text>
@@ -108,7 +114,7 @@ const petStore = usePetStore();
 
 const isLoggedIn = ref(false);
 const userInfo = ref(null);
-const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://49.235.65.37:5000';
 
 // Display avatar with proper URL handling
 const displayAvatar = computed(() => {
@@ -389,13 +395,13 @@ function formatImageUrl(url) {
 	
 	// 如果是相对路径，补充基础URL
 	if (url.startsWith('/uploads')) {
-		const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+		const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
 		return BASE_URL + url;
 	}
 	
 	// 如果是uploads路径但没有前导斜杠
 	if (url.startsWith('uploads/')) {
-		const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+		const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
 		return BASE_URL + '/' + url;
 	}
 	
@@ -533,6 +539,39 @@ function openPetRecognition() {
 	}
 	
 	navigateTo('/pages/pet/recognition');
+}
+
+// 处理添加标记
+function handleAddMarker() {
+	// 检查登录状态
+	if (!userStore.isAuthenticated) {
+		showToast('请先登录');
+		return;
+	}
+	
+	// 导航到标记页面
+	uni.navigateTo({
+		url: '/pages/map/index'
+	});
+}
+
+// 处理刷新定位
+function handleRefreshLocation() {
+	// 获取当前位置
+	uni.getLocation({
+		type: 'gcj02',
+		success: (res) => {
+			const { latitude, longitude } = res;
+			// 更新地图位置
+			mapContext.value?.moveToLocation({
+				latitude,
+				longitude
+			});
+		},
+		fail: () => {
+			showToast('获取位置失败');
+		}
+	});
 }
 </script>
 
@@ -714,6 +753,41 @@ function openPetRecognition() {
 	background-color: #ccc;
 }
 
+.walk-icon {
+	background-color: transparent;
+	background-image: url('../../static/images/walk-icon.png');
+	background-size: contain;
+	background-repeat: no-repeat;
+}
+
+.post-icon {
+	background-color: transparent;
+	background-image: url('../../static/images/post-icon.png');
+	background-size: contain;
+	background-repeat: no-repeat;
+}
+
+.map-icon {
+	background-color: transparent;
+	background-image: url('../../static/images/marker.png');
+	background-size: contain;
+	background-repeat: no-repeat;
+}
+
+.pet-icon {
+	background-color: transparent;
+	background-image: url('../../static/images/pet-icon.png');
+	background-size: contain;
+	background-repeat: no-repeat;
+}
+
+.settings-icon {
+	background-color: transparent;
+	background-image: url('../../static/images/settings-icon.png');
+	background-size: contain;
+	background-repeat: no-repeat;
+}
+
 .menu-text {
 	flex: 1;
 	font-size: 28rpx;
@@ -751,5 +825,42 @@ function openPetRecognition() {
 .edit-arrow {
 	font-size: 28rpx;
 	color: #999;
+}
+
+/* 添加工具栏样式 */
+.map-tools {
+	position: absolute;
+	top: 20rpx;
+	left: 20rpx;
+	right: 20rpx;
+	display: flex;
+	gap: 20rpx;
+	z-index: 100;
+}
+
+.tool-button {
+	background-color: #fff;
+	padding: 16rpx 32rpx;
+	border-radius: 40rpx;
+	display: flex;
+	align-items: center;
+	gap: 8rpx;
+	box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.1);
+}
+
+.tool-text {
+	font-size: 28rpx;
+	color: #333;
+}
+
+/* 适配暗黑模式 */
+@media (prefers-color-scheme: dark) {
+	.tool-button {
+		background-color: #333;
+	}
+	
+	.tool-text {
+		color: #fff;
+	}
 }
 </style> 

@@ -196,7 +196,7 @@ export const useLocationStore = defineStore('location', {
         
         // 调用API获取用户宠物信息
         const response = await uni.request({
-          url: `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/pets/user/${userId}`,
+          url: `${uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000'}/api/pets/user/${userId}`,
           method: 'GET',
           header: {
             'Authorization': `Bearer ${uni.getStorageSync('token')}`
@@ -224,7 +224,7 @@ export const useLocationStore = defineStore('location', {
         
         // 调用API检查关注状态
         const response = await uni.request({
-          url: `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/users/follow/check/${userId}`,
+          url: `${uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000'}/api/users/follow/check/${userId}`,
           method: 'GET',
           header: {
             'Authorization': `Bearer ${uni.getStorageSync('token')}`

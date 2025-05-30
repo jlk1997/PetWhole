@@ -607,11 +607,11 @@ export default {
 }
 
 .share-icon {
-  background-image: url('/static/images/share-icon.png');
+  // background-image: url('/static/images/share-icon.png');
 }
 
 .delete-icon {
-  background-image: url('/static/images/delete-icon.png');
+  // background-image: url('/static/images/delete-icon.png');
 }
 
 .action-text {

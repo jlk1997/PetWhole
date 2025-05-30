@@ -39,7 +39,7 @@ export default {
       
       // 如果是相对路径，添加基础URL
       if (this.user.avatar.startsWith('/uploads/')) {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+        const apiUrl = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
         const fullUrl = apiUrl + this.user.avatar;
         console.log('地图用户标记完整头像URL:', fullUrl);
         return fullUrl;

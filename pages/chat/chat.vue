@@ -106,16 +106,22 @@
 </template>
 
 <script>
-import { ref, reactive, onMounted, onUnmounted, nextTick, computed } from 'vue';
+import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch } from 'vue';
 import { onLoad, onUnload, onShow, onHide } from '@dcloudio/uni-app';
 import { useUserStore } from '@/store/user.js';
 import api from '@/utils/api.js';
+import chatService from '@/utils/chatService.js';
+import networkManager from '@/utils/networkManager.js';
+import chatStorage from '@/utils/chatStorage.js';
+
+// 聊天消息缓存键前缀
+const PRIVATE_CHAT_CACHE_PREFIX = 'private_chat_';
 
 export default {
   setup() {
     const userStore = useUserStore();
-    const userInfo = computed(() => userStore.userInfo || {});
-    const userId = computed(() => userInfo.value.id);
+    const userInfo = computed(() => userStore.user || {});
+    const userId = computed(() => userInfo.value.id || userInfo.value._id || '');
     
     // 聊天对象信息
     const chatUser = ref({});
@@ -130,13 +136,42 @@ export default {
     const scrollTop = ref(0);
     const messageList = ref(null);
     const lastLoadedMsgId = ref(null);
+    const hasNewMessages = ref(false);
     
     // 消息输入相关
     const newMessage = ref('');
     const inputFocus = ref(false);
     
+    // 网络状态
+    const networkStatus = ref({
+      isConnected: true,
+      networkType: 'unknown'
+    });
+    
+    // 页面状态
+    const isVisible = ref(true);
+    const messagesPage = ref(1);
+    
     // 定时检查在线状态
     let onlineCheckTimer = null;
+    
+    // 自动刷新控制
+    let autoRefreshTimer = null;
+    
+    // 网络状态监听
+    const setupNetworkListener = () => {
+      // 添加网络状态监听
+      networkManager.addListener((status) => {
+        networkStatus.value = status;
+        console.log('网络状态更新:', status);
+        
+        // 网络恢复在线后自动刷新消息
+        if (status.isConnected && isVisible.value) {
+          console.log('网络恢复，刷新消息');
+          loadMessages(true);
+        }
+      });
+    };
     
     // 从URL参数获取目标用户ID
     const getTargetUserId = () => {
@@ -144,23 +179,54 @@ export default {
       return query.userId || '';
     };
     
+    // 缓存键生成函数
+    const getCacheKey = () => {
+      if (!userId.value || !targetUserId.value) return null;
+      // 确保相同的用户对之间有相同的缓存键，与顺序无关
+      const userIds = [userId.value, targetUserId.value].sort().join('_');
+      return `${PRIVATE_CHAT_CACHE_PREFIX}${userIds}`;
+    };
+    
     // 加载聊天对象信息
     const loadChatUserInfo = async () => {
       if (!targetUserId.value) return;
       
       try {
-        // 应该调用获取用户信息的API
+        // 调用API获取用户信息
+        const response = await api.user.getUserInfo(targetUserId.value);
+        
+        if (response && (response.id || response._id)) {
+          chatUser.value = response;
+        } else {
+          console.warn('获取用户信息失败，使用临时数据');
         // 临时使用模拟数据
         chatUser.value = {
           id: targetUserId.value,
           username: '聊天用户',
           avatar: '/static/images/default-avatar.png'
         };
+        }
         
         // 检查用户在线状态
         checkUserOnline();
       } catch (error) {
         console.error('加载用户信息失败:', error);
+        
+        // 使用本地缓存的用户信息
+        try {
+          const cacheKey = getCacheKey();
+          if (cacheKey) {
+            const cachedData = uni.getStorageSync(`${cacheKey}_user`);
+            if (cachedData) {
+              const userData = JSON.parse(cachedData);
+              chatUser.value = userData;
+              console.log('使用缓存的用户信息:', userData);
+            }
+          }
+        } catch (cacheError) {
+          console.error('读取缓存用户信息失败:', cacheError);
+        }
+        
         uni.showToast({
           title: '加载用户信息失败',
           icon: 'none'
@@ -169,37 +235,166 @@ export default {
     };
     
     // 加载消息列表
-    const loadMessages = async () => {
+    const loadMessages = async (refresh = false) => {
       if (!targetUserId.value || !userId.value) return;
+      
+      if (isLoading.value && !refresh) {
+        console.log('已有加载请求进行中，跳过');
+        return;
+      }
       
       try {
         isLoading.value = true;
         
-        // 应该调用获取消息记录的API
-        // 临时使用模拟数据
-        const mockMessages = [];
-        
-        // 更新消息列表
-        messages.value = mockMessages;
-        
-        if (messages.value.length > 0) {
-          lastLoadedMsgId.value = messages.value[0].id;
+        // 刷新时重置页码
+        if (refresh) {
+          messagesPage.value = 1;
+          noMoreMessages.value = false;
+          lastLoadedMsgId.value = null;
         }
         
-        // 滚动到底部
+        // 准备请求参数
+        const params = {
+          targetUserId: targetUserId.value,
+          page: messagesPage.value,
+          limit: 20
+        };
+        
+        if (lastLoadedMsgId.value && !refresh) {
+          params.beforeMessageId = lastLoadedMsgId.value;
+        }
+        
+        console.log('加载消息, 参数:', params);
+        
+        // 尝试调用获取私聊消息的API
+        let receivedMessages = [];
+        
+        try {
+          // 实际API调用 - 如果API存在
+          if (api.chat.getPrivateMessages) {
+            const response = await api.chat.getPrivateMessages(params);
+            receivedMessages = response?.data || response || [];
+          } else {
+            // 没有可用的API，使用模拟数据
+            console.warn('没有找到私聊消息API，使用模拟数据');
+            
+            // 模拟数据 - 在实际开发中应替换为真实API
+            if (refresh) {
+              receivedMessages = Array(5).fill().map((_, i) => ({
+                id: `msg-${Date.now()}-${i}`,
+                content: `这是一条模拟消息 ${i + 1}`,
+                senderId: i % 2 === 0 ? userId.value : targetUserId.value,
+                receiverId: i % 2 === 0 ? targetUserId.value : userId.value,
+                createTime: new Date(Date.now() - (i * 60000)).getTime(),
+                status: 'sent'
+              }));
+            } else {
+              // 加载更多时返回更旧的消息
+              receivedMessages = Array(3).fill().map((_, i) => ({
+                id: `msg-old-${Date.now()}-${i}`,
+                content: `这是更早的模拟消息 ${i + 1}`,
+                senderId: i % 2 === 0 ? userId.value : targetUserId.value,
+                receiverId: i % 2 === 0 ? targetUserId.value : userId.value,
+                createTime: new Date(Date.now() - ((i + 10) * 60000)).getTime(),
+                status: 'sent'
+              }));
+            }
+          }
+        } catch (apiError) {
+          console.error('API调用失败:', apiError);
+          
+          // 网络错误时尝试从缓存加载
+          if (networkManager.isNetworkError(apiError)) {
+            const cacheKey = getCacheKey();
+            if (cacheKey) {
+              const cachedMessages = chatStorage.getPrivateMessages(cacheKey);
+              if (cachedMessages && cachedMessages.length > 0) {
+                receivedMessages = cachedMessages;
+                console.log('从缓存加载私聊消息', receivedMessages.length);
+              }
+            }
+          }
+          
+          // 如果没有缓存数据且是首次加载，使用临时数据避免界面空白
+          if (receivedMessages.length === 0 && refresh) {
+            receivedMessages = [{
+              id: `temp-${Date.now()}`,
+              content: '网络连接不佳，无法加载消息历史',
+              senderId: 'system',
+              createTime: Date.now(),
+              status: 'info',
+              isSystemMessage: true
+            }];
+          }
+        }
+        
+        // 处理消息数据
+        if (receivedMessages && receivedMessages.length > 0) {
+        // 更新消息列表
+          if (refresh) {
+            messages.value = receivedMessages;
+          } else {
+            // 追加旧消息，避免重复
+            const existingIds = messages.value.map(msg => msg.id);
+            const newMessages = receivedMessages.filter(msg => !existingIds.includes(msg.id));
+        
+            if (newMessages.length > 0) {
+              // 插入到列表开头，因为这些是历史消息
+              messages.value = [...newMessages, ...messages.value];
+              messagesPage.value++;
+              
+              // 更新最后加载的消息ID
+              if (newMessages.length > 0) {
+                const oldestMsg = [...newMessages].sort((a, b) => 
+                  new Date(a.createTime) - new Date(b.createTime)
+                )[0];
+                
+                if (oldestMsg) {
+                  lastLoadedMsgId.value = oldestMsg.id;
+                  console.log('更新最后加载的消息ID:', lastLoadedMsgId.value);
+                }
+              }
+            } else {
+              noMoreMessages.value = true;
+              console.log('没有更多历史消息了');
+            }
+          }
+          
+          // 保存到本地缓存
+          const cacheKey = getCacheKey();
+          if (cacheKey) {
+            chatStorage.savePrivateMessages(messages.value, cacheKey);
+            
+            // 同时缓存聊天对象信息
+            if (chatUser.value && (chatUser.value.id || chatUser.value._id)) {
+              uni.setStorageSync(`${cacheKey}_user`, JSON.stringify(chatUser.value));
+            }
+        }
+        
+          // 刷新成功后，滚动到底部
+          if (refresh) {
         await nextTick();
         scrollToBottom();
+          }
+        } else {
+          // 没有消息或返回为空
+          if (!refresh) {
+            noMoreMessages.value = true;
+          }
+        }
         
         // 标记消息为已读
         markMessagesAsRead();
       } catch (error) {
         console.error('加载消息失败:', error);
+        
         uni.showToast({
-          title: '加载消息失败',
+          title: '加载消息失败，请检查网络连接',
           icon: 'none'
         });
       } finally {
         isLoading.value = false;
+        isRefreshing.value = false;
       }
     };
     
@@ -210,52 +405,30 @@ export default {
         return;
       }
       
-      try {
-        isLoading.value = true;
         isRefreshing.value = true;
-        
-        // 记录当前第一条消息，用于后续定位
-        const firstMsg = messages.value.length > 0 ? messages.value[0] : null;
-        
-        // 应该调用获取历史消息的API，传入lastLoadedMsgId
-        // 临时使用模拟数据
-        const oldMessages = [];
-        
-        if (oldMessages.length === 0) {
-          noMoreMessages.value = true;
+      await loadMessages();
           isRefreshing.value = false;
-          return;
-        }
-        
-        // 将旧消息添加到列表前面
-        messages.value = [...oldMessages, ...messages.value];
-        
-        // 更新最后加载的消息ID
-        if (oldMessages.length > 0) {
-          lastLoadedMsgId.value = oldMessages[0].id;
-        }
-      } catch (error) {
-        console.error('加载更多消息失败:', error);
-        uni.showToast({
-          title: '加载更多消息失败',
-          icon: 'none'
-        });
-      } finally {
-        isLoading.value = false;
-        isRefreshing.value = false;
-      }
     };
     
     // 发送消息
     const sendMessage = async () => {
       if (!newMessage.value.trim() || !targetUserId.value || !userId.value) return;
       
-      const messageContent = newMessage.value;
+      if (!networkStatus.value.isConnected) {
+        uni.showToast({
+          title: '网络不可用，请检查网络连接',
+          icon: 'none'
+        });
+        return;
+      }
+      
+      const messageContent = newMessage.value.trim();
       newMessage.value = '';
       
       // 创建临时消息对象（用于乐观UI更新）
+      const tempId = 'temp-' + Date.now();
       const tempMessage = {
-        id: 'temp-' + Date.now(),
+        id: tempId,
         content: messageContent,
         createTime: new Date().getTime(),
         senderId: userId.value,
@@ -265,31 +438,150 @@ export default {
       
       // 添加到消息列表并滚动到底部
       messages.value.push(tempMessage);
+      
+      // 保存到本地缓存
+      const cacheKey = getCacheKey();
+      if (cacheKey) {
+        chatStorage.savePrivateMessages(messages.value, cacheKey);
+      }
+      
       await nextTick();
       scrollToBottom();
       
       try {
-        // 应该调用发送消息的API
-        // 模拟API调用延迟
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // 调用发送消息API
+        let response;
         
-        // 模拟发送成功
-        const sentMessageIndex = messages.value.findIndex(msg => msg.id === tempMessage.id);
+        try {
+          // 实际API调用 - 如果API存在
+          if (api.chat.sendPrivateMessage) {
+            response = await api.chat.sendPrivateMessage({
+              receiverId: targetUserId.value,
+              content: messageContent
+            });
+          } else {
+            // 没有可用的API，模拟延迟
+            console.warn('没有找到发送私聊消息API，模拟发送成功');
+        await new Promise(resolve => setTimeout(resolve, 500));
+            response = {
+              id: 'msg-' + Date.now(),
+              status: 'sent'
+            };
+          }
+        
+          // 更新消息状态为发送成功
+          const sentMessageIndex = messages.value.findIndex(msg => msg.id === tempId);
         if (sentMessageIndex !== -1) {
           messages.value[sentMessageIndex].status = 'sent';
-          messages.value[sentMessageIndex].id = 'msg-' + Date.now(); // 服务器返回的实际ID
+            
+            // 更新消息ID
+            if (response && (response.id || response._id)) {
+              messages.value[sentMessageIndex].id = response.id || response._id || tempId;
+            }
+            
+            // 更新本地缓存
+            if (cacheKey) {
+              chatStorage.savePrivateMessages(messages.value, cacheKey);
+            }
+          }
+        } catch (apiError) {
+          throw apiError; // 传递给外层错误处理
         }
       } catch (error) {
         console.error('发送消息失败:', error);
         
         // 更新消息状态为失败
-        const failedMessageIndex = messages.value.findIndex(msg => msg.id === tempMessage.id);
+        const failedMessageIndex = messages.value.findIndex(msg => msg.id === tempId);
         if (failedMessageIndex !== -1) {
           messages.value[failedMessageIndex].status = 'failed';
+          
+          // 更新本地缓存
+          if (cacheKey) {
+            chatStorage.savePrivateMessages(messages.value, cacheKey);
+          }
+        }
+        
+        // 保存待重试消息
+        chatStorage.savePendingMessage({
+          ...tempMessage,
+          type: 'private',
+          data: {
+            receiverId: targetUserId.value,
+            content: messageContent
+          }
+        });
+        
+        uni.showToast({
+          title: '发送消息失败，请检查网络',
+          icon: 'none'
+        });
+      }
+    };
+    
+    // 重试发送失败的消息
+    const retryMessage = async (messageId) => {
+      const messageIndex = messages.value.findIndex(msg => msg.id === messageId);
+      if (messageIndex === -1) return;
+      
+      const message = messages.value[messageIndex];
+      
+      // 更新状态为发送中
+      messages.value[messageIndex].status = 'sending';
+      
+      // 重新发送
+      try {
+        // 调用发送消息API
+        let response;
+        
+        try {
+          if (api.chat.sendPrivateMessage) {
+            response = await api.chat.sendPrivateMessage({
+              receiverId: targetUserId.value,
+              content: message.content
+            });
+          } else {
+            // 没有可用的API，模拟延迟
+            console.warn('没有找到发送私聊消息API，模拟发送成功');
+            await new Promise(resolve => setTimeout(resolve, 500));
+            response = {
+              id: 'msg-' + Date.now(),
+              status: 'sent'
+            };
+          }
+          
+          // 更新消息状态为发送成功
+          messages.value[messageIndex].status = 'sent';
+          
+          // 更新消息ID
+          if (response && (response.id || response._id)) {
+            messages.value[messageIndex].id = response.id || response._id;
+          }
+          
+          // 更新本地缓存
+          const cacheKey = getCacheKey();
+          if (cacheKey) {
+            chatStorage.savePrivateMessages(messages.value, cacheKey);
+          }
+          
+          // 移除待重试消息
+          chatStorage.removePendingMessage(messageId);
+        } catch (apiError) {
+          throw apiError; // 传递给外层错误处理
+        }
+      } catch (error) {
+        console.error('重试发送消息失败:', error);
+        
+        // 更新消息状态为失败
+        messages.value[messageIndex].status = 'failed';
+        
+        // 更新本地缓存
+        const cacheKey = getCacheKey();
+        if (cacheKey) {
+          chatStorage.savePrivateMessages(messages.value, cacheKey);
         }
         
         uni.showToast({
-          title: '发送消息失败',
+          title: '发送消息失败，请检查网络',
           icon: 'none'
         });
       }
@@ -299,11 +591,16 @@ export default {
     const markMessagesAsRead = async () => {
       if (!targetUserId.value || !userId.value) return;
       
+      // 如果有针对消息已读的API，在这里调用
+      if (api.chat.markMessagesAsRead) {
       try {
-        // 应该调用标记消息已读的API
-        console.log('标记消息已读');
+          await api.chat.markMessagesAsRead(targetUserId.value);
+          console.log('标记消息已读成功');
       } catch (error) {
         console.error('标记消息已读失败:', error);
+        }
+      } else {
+        console.log('没有找到标记消息已读API');
       }
     };
     
@@ -312,11 +609,17 @@ export default {
       if (!targetUserId.value) return;
       
       try {
-        // 应该调用检查用户在线状态的API
+        // 调用检查用户在线状态的API
+        if (api.user.checkUserOnline) {
+          const status = await api.user.checkUserOnline(targetUserId.value);
+          isOnline.value = status?.isOnline || false;
+        } else {
         // 临时使用模拟数据
         isOnline.value = Math.random() > 0.5;
+        }
       } catch (error) {
         console.error('检查用户在线状态失败:', error);
+        isOnline.value = false;
       }
     };
     
@@ -327,11 +630,13 @@ export default {
     
     // 滚动到底部
     const scrollToBottom = () => {
+      scrollTop.value = Math.random(); // 触发更新
+      
       nextTick(() => {
         const query = uni.createSelectorQuery().in(this);
         query.select('.message-list').boundingClientRect(data => {
           if (data) {
-            scrollTop.value = data.height * 100; // 一个足够大的数字确保滚动到底部
+            scrollTop.value = 99999; // 一个足够大的数字确保滚动到底部
           }
         }).exec();
       });
@@ -341,6 +646,54 @@ export default {
     const onScrollToUpper = () => {
       if (!isLoading.value && !noMoreMessages.value) {
         loadMoreMessages();
+      }
+    };
+    
+    // 设置自动刷新
+    const setupAutoRefresh = () => {
+      // 清除现有的定时器
+      if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
+      }
+      
+      // 设置新的定时器，每15秒自动刷新
+      autoRefreshTimer = setInterval(() => {
+        if (isVisible.value && networkStatus.value.isConnected) {
+          console.log('自动刷新消息');
+          loadMessages(true);
+        }
+      }, 15000);
+    };
+    
+    // 恢复待处理的消息
+    const restorePendingMessages = () => {
+      const pendingMessages = chatStorage.getPendingMessages();
+      if (pendingMessages && pendingMessages.length > 0) {
+        console.log('恢复待处理私聊消息');
+        
+        pendingMessages.forEach(message => {
+          if (message.type === 'private' && 
+              message.data.receiverId === targetUserId.value) {
+            // 检查是否已存在于消息列表
+            const existingIndex = messages.value.findIndex(m => m.id === message.id);
+            if (existingIndex === -1) {
+              messages.value.push({
+                id: message.id,
+                content: message.content,
+                createTime: message.createTime,
+                senderId: userId.value,
+                receiverId: targetUserId.value,
+                status: message.status
+              });
+            }
+            
+            // 尝试重新发送
+            if (message.status === 'sending' || message.status === 'failed') {
+              retryMessage(message.id);
+            }
+          }
+        });
       }
     };
     
@@ -410,7 +763,7 @@ export default {
       
       // 如果是相对路径，补充基础URL
       if (url.startsWith('/uploads')) {
-        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+        const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
         return BASE_URL + url;
       }
       
@@ -418,12 +771,27 @@ export default {
       return '/static/images/default-avatar.png';
     };
     
-    // 页面加载
     onLoad((options) => {
       targetUserId.value = options.userId || getTargetUserId();
+      
       if (targetUserId.value) {
+        // 设置网络监听
+        setupNetworkListener();
+        
+        // 加载用户信息
         loadChatUserInfo();
-        loadMessages();
+        
+        // 恢复待处理消息
+        restorePendingMessages();
+        
+        // 加载消息
+        loadMessages(true);
+        
+        // 设置自动刷新
+        setupAutoRefresh();
+        
+        // 启动定时检查在线状态
+        onlineCheckTimer = setInterval(checkUserOnline, 30000);
       } else {
         uni.showToast({
           title: '用户ID不能为空',
@@ -433,26 +801,47 @@ export default {
           uni.navigateBack();
         }, 1500);
       }
-      
-      // 启动定时检查在线状态
-      onlineCheckTimer = setInterval(checkUserOnline, 30000);
     });
     
-    // 页面显示
     onShow(() => {
+      isVisible.value = true;
+      
       // 重新检查在线状态
       checkUserOnline();
       
       // 标记消息为已读
       markMessagesAsRead();
+      
+      // 如果有新消息指示，刷新消息
+      if (hasNewMessages.value && networkStatus.value.isConnected) {
+        loadMessages(true);
+        hasNewMessages.value = false;
+      }
+      
+      // 重新设置自动刷新
+      setupAutoRefresh();
     });
     
-    // 页面卸载
+    onHide(() => {
+      isVisible.value = false;
+      
+      // 清除自动刷新
+      if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
+      }
+    });
+    
     onUnload(() => {
       // 清除定时器
       if (onlineCheckTimer) {
         clearInterval(onlineCheckTimer);
         onlineCheckTimer = null;
+      }
+      
+      if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
       }
     });
     
@@ -471,6 +860,7 @@ export default {
       userId,
       loadMoreMessages,
       sendMessage,
+      retryMessage,
       backToList,
       shouldShowDate,
       formatDate,

@@ -1,0 +1,1 @@
+"use strict";const s={BASE_API_URL:"/api",TIMEOUT:3e4,DEBUG:!1,USE_MOCK_API:!1,API_PREFIX:{AUTH:"/api/users",USERS:"/api/users",PETS:"/api/pets",POSTS:"/api/community",WALKS:"/api/users/me/walks",LOCATIONS:"/api/locations"},VERSION:"1.0.0",APP_NAME:"DogRun"};exports.config=s;

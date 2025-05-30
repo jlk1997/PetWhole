@@ -2,7 +2,7 @@
 	<view class="login-container">
 		<view class="logo-container">
 			<image class="logo" src="/static/images/app-logo.png" mode="aspectFit"></image>
-			<text class="app-name">DogRun</text>
+			<text class="app-name">遛宠派</text>
 		</view>
 		
 		<view class="form-container">

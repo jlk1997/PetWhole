@@ -6,7 +6,8 @@ import config from '@/config/index.js'
 
 // 请求超时时间（毫秒）
 const TIMEOUT = 30000
-const BASE_URL = config.BASE_API_URL || 'http://localhost:5000'
+// 基础URL
+export const BASE_URL = config.BASE_API_URL || 'http://49.235.65.37:5000'
 
 // 遛狗相关API路径
 const WALK_API_PATHS = [
@@ -362,6 +363,3 @@ const handleCommunityApiRequest = (options) => {
 
 // 导出请求函数
 export default request 
-
-// 导出BASE_URL常量供其他模块使用
-export { BASE_URL } 

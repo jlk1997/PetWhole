@@ -54,17 +54,42 @@
 				<text class="icon">➖</text>
 				<text class="toolbar-text">缩小</text>
 			</view>
+			<view class="toolbar-item" @tap="showAddMarkerForm">
+				<text class="icon">📍</text>
+				<text class="toolbar-text">标记</text>
+			</view>
 			<view class="toolbar-item pet-identify" @tap="navigateToPetIdentify">
 				<text class="icon">🔍</text>
 				<text class="toolbar-text">识别</text>
 			</view>
+			<view class="toolbar-item" @tap="toggleMarkersVisibility">
+				<text class="icon">👁️</text>
+				<text class="toolbar-text">{{ showMarkers ? '隐藏标记' : '显示标记' }}</text>
+			</view>
+			<view class="toolbar-item ai-medical" @tap="navigateToAIMedical">
+				<text class="icon">🏥</text>
+				<text class="toolbar-text">AI医疗</text>
+			</view>
 		</view>
+
+		<!-- 添加标记按钮 -->
+		<!-- <view class="add-marker-btn" @click="showAddMarkerForm">
+			<uni-icons type="plusempty" size="24" color="#FFFFFF"></uni-icons>
+			<text class="btn-text">添加标记</text>
+		</view> -->
 		
 		<!-- 开始/停止遛狗按钮 -->
 		<view class="start-button" @tap="toggleWalkingMode">
 			<view class="start-button-inner" :class="{'active': isWalking}">
 				<text class="start-icon">{{ isWalking ? '⏹️' : '▶️' }}</text>
 				<text class="start-text">{{ isWalking ? '停止' : '开始' }}</text>
+			</view>
+		</view>
+		
+		<!-- 添加地图刷新按钮 -->
+		<view class="refresh-map-btn" @tap="refreshMap">
+			<view class="refresh-btn-inner">
+				<text class="refresh-icon">🔄</text>
 			</view>
 		</view>
 		
@@ -120,16 +145,64 @@
 		
 		<!-- 隐藏的Canvas用于生成本地图片 -->
 		<canvas canvas-id="debug-canvas" style="width: 40px; height: 40px; position: absolute; left: -100px;"></canvas>
+		
+		<!-- 自定义标记弹窗 -->
+		<view v-if="showCustomMarkerPopup" class="custom-marker-popup">
+			<view class="popup-backdrop" @click="showCustomMarkerPopup = false"></view>
+			<view class="popup-content">
+				<view class="popup-header">
+					<text class="popup-title">{{ selectedMarker?.title || '未命名标记' }}</text>
+					<view class="close-btn" @click="showCustomMarkerPopup = false">×</view>
+				</view>
+				
+				<view class="popup-body">
+					<view class="marker-type">
+						<view class="marker-type-icon" :style="{ backgroundColor: getMarkerColor(selectedMarker?.type) }">
+							<text class="type-icon">{{ getMarkerTypeIcon(selectedMarker?.type) }}</text>
+						</view>
+						<text class="marker-type-name">{{ getMarkerTypeName(selectedMarker?.type) }}</text>
+					</view>
+					
+					<view class="marker-description">
+						<text class="description-text">{{ selectedMarker?.description || '暂无描述内容' }}</text>
+					</view>
+					
+					<view class="marker-info">
+						<view class="info-item" v-if="selectedMarker?.radius">
+							<text class="info-icon">⭕</text>
+							<text class="info-text">覆盖半径: {{ selectedMarker.radius < 100 ? selectedMarker.radius + '公里 (' + (selectedMarker.radius * 1000).toFixed(0) + '米)' : selectedMarker.radius + '米' }}</text>
+						</view>
+						<view class="info-item" v-if="selectedMarker?.createdAt">
+							<text class="info-icon">🕒</text>
+							<text class="info-text">创建时间: {{ formatTime(selectedMarker.createdAt) }}</text>
+						</view>
+						<view class="info-item" v-if="selectedMarker?.user && typeof selectedMarker.user !== 'string'">
+							<text class="info-icon">👤</text>
+							<text class="info-text">创建者: {{ getUserName(selectedMarker.user) }}</text>
+						</view>
+					</view>
+				</view>
+				
+				<view class="popup-footer">
+					<view class="popup-btn cancel-btn" @click="showCustomMarkerPopup = false">关闭</view>
+					<view class="popup-btn confirm-btn" @click="navigateToMarker(selectedMarker)">导航</view>
+				</view>
+			</view>
+		</view>
 	</view>
 </template>
 
 <script>
 import { ref, computed, onMounted, onUnmounted, onBeforeUnmount, nextTick, watch } from 'vue';
+import { onShow } from '@dcloudio/uni-app';
 import { useUserStore } from '@/store/user.js';
 import { usePetStore } from '@/store/pet.js';
 import { useLocationStore } from '@/store/location.js';
+import { useMarkerStore } from '@/stores/markerStore.js'; // 修正路径
 import { formatDuration, calculatePace, calculateDistance } from '@/utils/amap.js';
 import api from '@/utils/api.js'; // 添加API导入
+import request from '@/utils/request.js'; // 导入request函数
+import { markerIconsBase64, markerColors } from '@/static/images/marker-icons.js'; // 导入标记图标
 
 // 修正组件导入路径
 import UserInfoPopup from '@/components/map/UserInfoPopup.vue';
@@ -144,11 +217,1072 @@ export default {
 		const userStore = useUserStore();
 		const petStore = usePetStore();
 		const locationStore = useLocationStore();
+		const markerStore = useMarkerStore(); // 确保引入markerStore
+		
+		// 后端可用状态响应式变量
+		const isBackendAvailable = ref(true);
 		
 		// 高德地图对象
 		const map = ref(null);
 		// 用户标记对象 - 定义userMarkers为空对象
 		const userMarkers = {};
+		
+		// 刷新地图函数 - 使用最简单的浏览器原生刷新方式
+		function refreshMap() {
+			console.log('刷新地图 - 使用浏览器刷新');
+			uni.showLoading({
+				title: '刷新地图中...',
+				mask: true
+			});
+			
+			try {
+				// 最简单但有效的方式：强制刷新整个页面
+				// 在H5环境中，我们可以使用window.location.reload()
+				if (typeof window !== 'undefined') {
+					// 使用短暂延迟，让用户看到加载提示
+					setTimeout(() => {
+						console.log('执行页面刷新');
+						window.location.reload();
+						// 注意：reload后下面的代码不会执行
+					}, 500);
+				} else {
+					// 在非H5环境下使用uni-app方式重新加载页面
+					console.log('非H5环境，使用uni-app方式刷新');
+					
+					// 先切换到不同的tab页，然后再切回来
+					const currentPage = '/pages/map/map';
+					
+					// 切换到其他页面，然后立即返回
+					uni.switchTab({
+						url: '/pages/index/index',
+						success: () => {
+							setTimeout(() => {
+								// 切换回地图页
+								uni.switchTab({
+									url: '/pages/map/index',
+									complete: () => {
+										uni.hideLoading();
+									}
+								});
+							}, 300);
+						},
+						fail: () => {
+							uni.hideLoading();
+							uni.showToast({
+								title: '刷新失败，请手动切换页面',
+								icon: 'none',
+								duration: 2000
+							});
+						}
+					});
+				}
+			} catch (error) {
+				console.error('执行刷新操作时出错:', error);
+				uni.hideLoading();
+				uni.showToast({
+					title: '刷新失败，请手动切换页面',
+					icon: 'none',
+					duration: 2000
+				});
+			}
+		}
+		
+		// 这里已删除safelyResetMap函数，由新的refreshMap函数替代
+		
+		// 添加用户头像缓存
+		const avatarCache = {
+			// 存储头像URL与生成的图像的映射关系
+			cache: {},
+			
+			// 获取缓存的头像图片，如果不存在则返回null
+			get(imageUrl) {
+				// 规范化URL，确保相同资源的不同URL格式能命中同一缓存
+				const normalizedUrl = this.normalizeUrl(imageUrl);
+				return this.cache[normalizedUrl] || null;
+			},
+			
+			// 将图像添加到缓存
+			put(imageUrl, dataUrl) {
+				// 规范化URL作为缓存键
+				const normalizedUrl = this.normalizeUrl(imageUrl);
+				this.cache[normalizedUrl] = dataUrl;
+				// 输出缓存状态（生产环境应删除）
+				console.log('头像缓存更新，当前缓存数:', Object.keys(this.cache).length);
+				return dataUrl;
+			},
+			
+			// 清除单个URL的缓存
+			remove(imageUrl) {
+				const normalizedUrl = this.normalizeUrl(imageUrl);
+				if (this.cache[normalizedUrl]) {
+					delete this.cache[normalizedUrl];
+					return true;
+				}
+				return false;
+			},
+			
+			// 清除所有缓存
+			clear() {
+				this.cache = {};
+				console.log('头像缓存已清空');
+				return true;
+			},
+			
+			// 规范化URL以提高缓存命中率
+			normalizeUrl(url) {
+				if (!url) return '';
+				
+				// 去除URL参数（如时间戳）
+				let normalized = url.split('?')[0];
+				
+				// 处理相对路径
+				if (normalized.startsWith('/uploads/')) {
+					const baseUrl = import.meta.env.VITE_API_URL || 'http://49.235.65.37:5000';
+					normalized = baseUrl + normalized;
+				}
+				
+				return normalized;
+			}
+		};
+		
+		// 设备方向处理函数
+		function handleDeviceOrientation() {
+			// 方向获取方法的可用性标记
+			const orientationSupport = {
+				motionEvent: false,
+				deviceOrientation: false,
+				geolocation: false,
+				compass: false,
+				manualSet: true // 手动设置总是可用
+			};
+			
+			// 方向数据来源优先级
+			let orientationSource = null;
+			
+			// 初始化方向传感器
+			function initOrientationSensors() {
+				// 1. 使用设备方向事件（最精确）
+				try {
+					if (typeof DeviceOrientationEvent !== 'undefined') {
+						orientationSupport.motionEvent = true;
+						window.addEventListener('deviceorientation', (event) => {
+							// alpha: 设备绕Z轴旋转角度，即平面内的罗盘方向(0-360)
+							if (event.alpha !== null && event.alpha !== undefined) {
+								const heading = event.alpha;
+								updateUserHeading(heading, 'deviceorientationevent');
+							}
+						});
+						console.log('已注册设备方向事件监听器');
+					}
+				} catch (e) {
+					console.warn('设备方向事件不可用:', e);
+				}
+				
+				// 2. 使用uni-app设备方向API
+				try {
+					if (typeof uni.onDeviceMotionChange === 'function') {
+						uni.startDeviceMotionListening({
+							interval: 'game',
+							success: () => {
+								orientationSupport.deviceOrientation = true;
+								console.log('uni-app设备方向监听启动成功');
+							},
+							fail: (err) => {
+								console.warn('uni-app设备方向监听启动失败', err);
+							}
+						});
+						
+						uni.onDeviceMotionChange((res) => {
+							if (res.alpha !== undefined) {
+								const heading = res.alpha;
+								updateUserHeading(heading, 'uniapp-motion');
+							}
+						});
+					}
+				} catch (e) {
+					console.warn('uni-app设备方向API不可用:', e);
+				}
+				
+				// 3. 使用地理位置API的方向信息
+				try {
+					if (navigator.geolocation && navigator.geolocation.watchPosition) {
+						navigator.geolocation.watchPosition(
+							(pos) => {
+								if (pos.coords.heading !== null && pos.coords.heading !== undefined) {
+									orientationSupport.geolocation = true;
+									const heading = pos.coords.heading;
+									updateUserHeading(heading, 'geolocation');
+								}
+							},
+							(err) => {
+								console.warn('地理位置方向跟踪错误:', err);
+							},
+							{
+								enableHighAccuracy: true,
+								maximumAge: 0
+							}
+						);
+						console.log('已启动地理位置方向跟踪');
+					}
+				} catch (e) {
+					console.warn('地理位置方向API不可用:', e);
+				}
+				
+				// 4. 使用uni-app指南针API
+				try {
+					if (typeof uni.onCompassChange === 'function') {
+						uni.onCompassChange((res) => {
+							if (res.direction !== undefined) {
+								orientationSupport.compass = true;
+								const heading = res.direction;
+								updateUserHeading(heading, 'compass');
+							}
+						});
+						console.log('已启动指南针方向跟踪');
+					}
+				} catch (e) {
+					console.warn('指南针API不可用:', e);
+				}
+				
+				// 5. 监测移动方向（基于位置变化计算）
+				setupMovementDirectionTracking();
+				
+				// 检查并报告可用的方向传感器
+				setTimeout(() => {
+					console.log('方向传感器可用性:', orientationSupport);
+					
+					// 如果没有可用的方向传感器，提示用户
+					if (!orientationSupport.motionEvent && 
+						!orientationSupport.deviceOrientation && 
+						!orientationSupport.geolocation && 
+						!orientationSupport.compass) {
+						console.warn('没有可用的方向传感器，用户头像将不会旋转');
+						
+						// 可以在这里添加UI提示，告知用户方向功能受限
+						if (showDebug.value) {
+							uni.showToast({
+								title: '设备不支持方向传感器',
+								icon: 'none',
+								duration: 2000
+							});
+						}
+					}
+				}, 3000); // 给传感器初始化一些时间
+			}
+			
+			// 根据来源优先级更新用户方向
+			function updateUserHeading(heading, source) {
+				// 特定来源的处理逻辑
+				if (source === 'compass') {
+					// 罗盘角度不需要特殊处理
+				} else if (source === 'geolocation') {
+					// 地理位置API的heading是相对于地理北极的，顺时针方向(0-360)
+					// 不需要特殊处理
+				} else if (source === 'deviceorientationevent' || source === 'uniapp-motion') {
+					// DeviceOrientationEvent的alpha是相对于初始方向，逆时针方向(0-360)
+					// 需要转换为顺时针方向
+					heading = (360 - heading) % 360;
+				}
+				
+				// 来源优先级判断
+				const priority = {
+					'movement': 5,
+					'geolocation': 4,
+					'deviceorientationevent': 3,
+					'uniapp-motion': 2,
+					'compass': 1,
+					'manual': 0
+				};
+				
+				// 如果当前没有来源，或新来源优先级更高，则更新
+				if (!orientationSource || priority[source] > priority[orientationSource]) {
+					orientationSource = source;
+				}
+				
+				// 只有当前来源匹配接收到的来源时才更新方向
+				if (source === orientationSource) {
+					userHeading.value = heading;
+					
+					// 更新用户标记旋转角度
+					updateUserMarkerRotation(heading);
+				}
+			}
+			
+			// 根据位置变化跟踪移动方向
+			function setupMovementDirectionTracking() {
+				// 存储最近几个位置记录
+				const recentLocations = [];
+				const maxLocationHistory = 5;
+				
+				// 监听位置更新
+				watch(currentLocation, (newLocation, oldLocation) => {
+					if (newLocation && oldLocation) {
+						// 计算位移大小
+						const distance = calculateDistance(
+							oldLocation.latitude, oldLocation.longitude,
+							newLocation.latitude, newLocation.longitude
+						);
+						
+						// 只在移动距离足够时才计算方向（避免GPS误差）
+						if (distance > 5) { // 5米以上才认为是有效移动
+							// 计算移动方向（方位角）
+							const bearing = calculateBearing(
+								oldLocation.latitude, oldLocation.longitude,
+								newLocation.latitude, newLocation.longitude
+							);
+							
+							// 添加到最近位置记录
+							recentLocations.push({
+								location: newLocation,
+								timestamp: Date.now(),
+								bearing: bearing,
+								distance: distance
+							});
+							
+							// 保持记录数量限制
+							if (recentLocations.length > maxLocationHistory) {
+								recentLocations.shift();
+							}
+							
+							// 用最近几次有效移动的平均方向更新用户方向
+							if (recentLocations.length >= 2) {
+								// 计算加权平均方向（较新和距离较大的移动有更高权重）
+								let weightedBearingSum = 0;
+								let weightSum = 0;
+								
+								recentLocations.forEach((record, index) => {
+									// 较新的记录和距离较大的记录有更高权重
+									const recency = (index + 1) / recentLocations.length; // 0.2-1.0
+									const distanceFactor = Math.min(record.distance / 10, 1); // 最大为1
+									const weight = recency * distanceFactor;
+									
+									weightedBearingSum += record.bearing * weight;
+									weightSum += weight;
+								});
+								
+								if (weightSum > 0) {
+									const avgBearing = weightedBearingSum / weightSum;
+									updateUserHeading(avgBearing, 'movement');
+								}
+							}
+						}
+					}
+				}, { deep: true });
+			}
+			
+			// 更新用户标记旋转角度
+			function updateUserMarkerRotation(heading) {
+				// 对于当前用户标记
+				const userId = userStore.userInfo?.id || 'current-user-location';
+				
+				// 如果标记存在于userMarkers中
+				if (userMarkers[userId] && userMarkers[userId].setRotation) {
+					userMarkers[userId].setRotation(heading);
+				}
+				
+				// 也可以发出一个事件通知其他组件方向已更新
+				// 如果你有事件总线或者状态管理机制
+			}
+			
+			// 计算两点间的方位角（0-360度，北方为0度，顺时针）
+			function calculateBearing(lat1, lon1, lat2, lon2) {
+				// 转换为弧度
+				lat1 = lat1 * Math.PI / 180;
+				lon1 = lon1 * Math.PI / 180;
+				lat2 = lat2 * Math.PI / 180;
+				lon2 = lon2 * Math.PI / 180;
+				
+				// 计算方位角
+				const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+				const x = Math.cos(lat1) * Math.sin(lat2) -
+						Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+				let bearing = Math.atan2(y, x) * 180 / Math.PI;
+				
+				// 将结果规范化到0-360度
+				bearing = (bearing + 360) % 360;
+				
+				return bearing;
+			}
+			
+			// 初始化方向传感器
+			initOrientationSensors();
+			
+			// 返回可能需要的公共方法
+			return {
+				// 允许手动设置方向（例如通过UI控件）
+				setManualHeading: (heading) => {
+					updateUserHeading(heading, 'manual');
+				},
+				
+				// 获取当前方向信息
+				getOrientationInfo: () => {
+					return {
+						currentHeading: userHeading.value,
+						currentSource: orientationSource,
+						supportInfo: {...orientationSupport}
+					};
+				}
+			};
+		}
+  
+		// 添加标记显示控制
+		const showMarkers = ref(true);
+		
+		// 自定义标记弹窗控制
+		const showCustomMarkerPopup = ref(false);
+		// 当前选中的标记
+		const selectedMarker = ref(null);
+		
+		// 用于跟踪圆形覆盖区域
+		const markerCircles = {};
+		
+		// 控制标记的显示和隐藏
+		const toggleMarkersVisibility = () => {
+			showMarkers.value = !showMarkers.value;
+			
+			if (map.value) {
+				// 获取所有圆形覆盖区域和标记，但排除用户头像标记
+				const circles = map.value.getAllOverlays('circle');
+				const allMapMarkers = map.value.getAllOverlays('marker');
+				
+				// 筛选出非用户头像的标记
+				const markerOverlays = allMapMarkers.filter(marker => {
+					// 通过extData或其他属性判断是否是用户头像
+					const extData = marker.getExtData();
+					return !(extData && extData.isUserMarker); // isUserMarker是我们为用户头像标记添加的标识
+				});
+				
+				if (showMarkers.value) {
+					// 显示所有标记（非用户头像）
+					markerOverlays.forEach(marker => {
+						marker.show();
+					});
+					
+					// 显示所有圆形覆盖区域
+					circles.forEach(circle => {
+						circle.show();
+					});
+					
+					console.log('显示所有标记和覆盖区域');
+				} else {
+					// 隐藏所有标记（非用户头像）
+					markerOverlays.forEach(marker => {
+						marker.hide();
+					});
+					
+					// 隐藏所有圆形覆盖区域
+					circles.forEach(circle => {
+						circle.hide();
+					});
+					
+					console.log('隐藏所有标记和覆盖区域，用户头像保持显示');
+				}
+				
+				// 确保用户头像始终显示在最上层
+				ensureUserMarkersOnTop();
+			}
+		};
+		
+		// 确保用户头像标记位于最上层
+		const ensureUserMarkersOnTop = () => {
+			if (!map.value) return;
+			
+			const allMarkers = map.value.getAllOverlays('marker');
+			
+			// 筛选出用户头像标记
+			const userMarkers = allMarkers.filter(marker => {
+				const extData = marker.getExtData();
+				return extData && extData.isUserMarker;
+			});
+			
+			// 将用户头像提升到最上层
+			userMarkers.forEach(marker => {
+				marker.setzIndex(1000); // 设置高z-index确保显示在最上层
+				marker.show(); // 确保显示
+			});
+		};
+		
+		// 添加加载标记数据的方法
+		const loadMarkers = async () => {
+			try {
+				console.log('加载标记数据...');
+				if (!currentLocation.value) {
+					console.warn('当前位置不可用，无法加载附近标记');
+					return;
+				}
+				
+				console.log('正在从服务器获取附近标记...');
+				console.log('当前位置:', currentLocation.value);
+				
+				// 添加加载状态提示
+				const loadingToast = {
+					show: () => {
+						uni.showLoading({
+							title: '加载标记中...',
+							mask: false
+						});
+					},
+					hide: () => {
+						uni.hideLoading();
+					}
+				};
+				
+				// 显示加载中
+				loadingToast.show();
+				
+				try {
+					// 使用markerStore加载附近标记
+					const nearbyMarkers = await markerStore.fetchNearbyMarkers({
+						longitude: currentLocation.value.longitude,
+						latitude: currentLocation.value.latitude,
+						radius: 5000 // 5公里范围内的标记
+					});
+					
+					// 隐藏加载中
+					loadingToast.hide();
+					
+					console.log('获取到附近标记:', nearbyMarkers.length);
+					
+					// 规范化标记数据格式，确保location和coordinates的一致性
+					const normalizedMarkers = nearbyMarkers.map(marker => {
+						// 创建标记的深拷贝，避免修改原始数据
+						const normalizedMarker = {...marker};
+						
+						// 确保marker有latitude和longitude属性
+						if (!normalizedMarker.latitude || !normalizedMarker.longitude) {
+							if (normalizedMarker.location && normalizedMarker.location.coordinates) {
+								// 从MongoDB GeoJSON格式提取坐标
+								normalizedMarker.longitude = normalizedMarker.location.coordinates[0];
+								normalizedMarker.latitude = normalizedMarker.location.coordinates[1];
+							}
+						}
+						
+						// 确保有半径属性，不设置默认值，使用标记自己的半径
+						if (normalizedMarker.radius === undefined || normalizedMarker.radius === null) {
+							normalizedMarker.radius = 0.5; // 默认0.5公里（500米）
+							console.log(`标记 ${normalizedMarker.title || '未命名'} 没有半径，设置默认值0.5公里`);
+						} else {
+							console.log(`标记 ${normalizedMarker.title || '未命名'} 半径: ${normalizedMarker.radius}`);
+						}
+						
+						// 确保有颜色属性
+						if (!normalizedMarker.color) {
+							normalizedMarker.color = normalizedMarker.color || '#007AFF';
+						}
+						
+						return normalizedMarker;
+					});
+					
+					// 显示标记及其覆盖范围
+					displayMarkers(normalizedMarkers);
+					
+					// 如果没有标记，显示提示
+					if (normalizedMarkers.length === 0) {
+						uni.showToast({
+							title: '附近没有标记',
+							icon: 'none',
+							duration: 2000
+						});
+					}
+				} catch (apiError) {
+					// 隐藏加载中
+					loadingToast.hide();
+					
+					console.error('API获取标记失败:', apiError);
+					
+					// 显示友好的错误消息
+					uni.showToast({
+						title: '加载标记失败，请重试',
+						icon: 'none',
+						duration: 2000
+					});
+					
+					// 显示任何可能的缓存数据
+					if (markerStore.markerCache && markerStore.markerCache.data && markerStore.markerCache.data.length > 0) {
+						console.log('尝试使用缓存的标记数据');
+						
+						// 使用缓存数据
+						const cachedMarkers = markerStore.filterMarkersByDistance(
+							markerStore.markerCache.data,
+							{
+								latitude: currentLocation.value.latitude,
+								longitude: currentLocation.value.longitude,
+								radius: 5000
+							}
+						);
+						
+						if (cachedMarkers.length > 0) {
+							// 规范化缓存标记数据
+							const normalizedCachedMarkers = cachedMarkers.map(marker => {
+								if (!marker.latitude || !marker.longitude) {
+									if (marker.location && marker.location.coordinates) {
+										marker.longitude = marker.location.coordinates[0];
+										marker.latitude = marker.location.coordinates[1];
+									}
+								}
+								
+								marker.radius = marker.radius || 500;
+								marker.color = marker.color || '#007AFF';
+								
+								return marker;
+							});
+							
+							// 显示缓存标记
+							displayMarkers(normalizedCachedMarkers);
+							
+							uni.showToast({
+								title: '显示缓存的标记数据',
+								icon: 'none',
+								duration: 2000
+							});
+						} else {
+							// 清空标记列表
+							displayMarkers([]);
+						}
+					} else {
+						// 清空标记列表
+						displayMarkers([]);
+					}
+				}
+			} catch (error) {
+				console.error('加载标记数据失败:', error);
+				
+				// 隐藏可能的loading状态
+				uni.hideLoading();
+				
+				// 显示友好的错误消息
+				uni.showToast({
+					title: '加载标记失败，请重试',
+					icon: 'none',
+					duration: 2000
+				});
+			}
+		};
+		
+		// 显示标记
+		const displayMarkers = (markers) => {
+			try {
+				console.log('显示标记数据:', markers);
+				if (!markers || !markers.length) {
+					console.log('没有标记可显示');
+					return;
+				}
+				
+				// 清除之前的标记，但不清除用户头像标记
+				if (map.value) {
+					// 获取所有标记
+					const allMarkers = map.value.getAllOverlays('marker');
+					
+					// 筛选出非用户头像标记进行删除
+					const nonUserMarkers = allMarkers.filter(marker => {
+						const extData = marker.getExtData();
+						return !(extData && extData.isUserMarker);
+					});
+					
+					// 删除非用户头像标记
+					if (nonUserMarkers.length > 0) {
+						map.value.remove(nonUserMarkers);
+					}
+					
+					// 删除所有圆形覆盖区域
+					map.value.remove(map.value.getAllOverlays('circle'));
+				}
+				
+				// 添加新标记和覆盖圆
+				markers.forEach(marker => {
+					try {
+						console.log('添加标记:', marker);
+						// 创建标记
+						const markerPosition = [marker.longitude || marker.location?.coordinates?.[0], 
+											  marker.latitude || marker.location?.coordinates?.[1]];
+						
+						if (!markerPosition[0] || !markerPosition[1]) {
+							console.warn('标记位置无效:', markerPosition);
+							return;
+						}
+						
+						// 确保标记数据完整
+						if (!marker.title) {
+							marker.title = marker.title || '未命名标记';
+						}
+						if (!marker.type) {
+							marker.type = marker.type || 'general';
+						}
+						
+						// 创建标记
+						const mapMarker = new AMap.Marker({
+							position: markerPosition,
+							title: marker.title,
+							icon: marker.icon || getIconForType(marker.type),
+							anchor: 'bottom-center',
+							offset: new AMap.Pixel(0, 0),
+							extData: { 
+								marker: marker,
+								id: marker._id,
+								type: 'marker'
+							},
+							clickable: true
+						});
+						
+						// 添加标记到地图
+						map.value.add(mapMarker);
+						
+						// 添加标记点击事件
+						mapMarker.on('click', (e) => {
+							console.log('标记被点击:', marker);
+							markerStore.setSelectedMarker(marker);
+							
+							// 始终使用原始的完整marker数据，避免extData可能不全的问题
+							// 这确保了无论点击标记图标还是圆形区域，都使用相同的数据
+							showMarkerPopup(marker);
+						});
+						
+						// 如果标记有半径，创建一个圆形覆盖
+						if (marker.radius) {
+							// 确保半径值正确（处理可能的km和m单位转换）
+							let radiusInMeters;
+							
+							// 如果是数字，检查大小范围判断可能的单位
+							if (typeof marker.radius === 'number') {
+								// 如果值较小（< 100），认为是以公里为单位，需要转换为米
+								if (marker.radius < 100) {
+									radiusInMeters = marker.radius * 1000;
+									console.log(`标记 "${marker.title || '未命名'}" [${marker._id}] - 转换半径从 ${marker.radius}km 到 ${radiusInMeters}m`);
+								} else {
+									// 值较大，可能已经是米为单位
+									radiusInMeters = marker.radius;
+									console.log(`标记 "${marker.title || '未命名'}" [${marker._id}] - 使用原始半径 ${radiusInMeters}m`);
+								}
+							} else {
+								// 处理字符串情况，尝试解析
+								const parsedRadius = parseFloat(marker.radius) || 0.5;
+								radiusInMeters = parsedRadius < 100 ? parsedRadius * 1000 : parsedRadius;
+								console.log(`标记 "${marker.title || '未命名'}" [${marker._id}] - 从字符串转换半径: ${marker.radius} -> ${radiusInMeters}m`);
+							}
+							
+							// 记录最终使用的半径值，便于调试
+							console.log(`最终使用的覆盖半径: ${radiusInMeters}米 (原始值: ${marker.radius})`);
+							
+							// 创建圆形
+							const circle = new AMap.Circle({
+								center: markerPosition,
+								radius: radiusInMeters, // 半径，单位：米
+								strokeColor: marker.color || '#1E90FF',
+								strokeWeight: 2,
+								strokeOpacity: 0.8,
+								fillColor: marker.color || '#1E90FF',
+								fillOpacity: 0.15,
+								extData: { marker }
+							});
+							
+							// 添加圆形到地图
+							map.value.add(circle);
+							
+							// 添加圆形点击事件
+							circle.on('click', (e) => {
+								console.log('标记区域被点击:', marker);
+								markerStore.setSelectedMarker(marker);
+								
+								// 使用e.target来获取圆形对象
+								const clickedCircle = e.target;
+								
+								// 添加视觉反馈 - 暂时改变圆形的颜色
+								const originalStrokeColor = clickedCircle.getOptions().strokeColor;
+								const originalFillColor = clickedCircle.getOptions().fillColor;
+								const originalFillOpacity = clickedCircle.getOptions().fillOpacity;
+								
+								// 高亮显示
+								clickedCircle.setOptions({
+									strokeColor: '#FF3B30', // 红色边框
+									fillColor: '#FF3B30',   // 红色填充
+									fillOpacity: 0.3        // 增加透明度
+								});
+								
+								// 1秒后恢复原样
+								setTimeout(() => {
+									clickedCircle.setOptions({
+										strokeColor: originalStrokeColor,
+										fillColor: originalFillColor,
+										fillOpacity: originalFillOpacity
+									});
+								}, 1000);
+								
+								// 始终使用原始的完整marker数据，与标记点击保持一致的处理逻辑
+								showMarkerPopup(marker);
+							});
+						}
+					} catch (markerError) {
+						console.error('添加单个标记时出错:', markerError);
+					}
+				});
+				
+				console.log('标记显示完成');
+				
+				// 确保用户头像标记显示在最上层
+				ensureUserMarkersOnTop();
+				
+				// 根据showMarkers状态决定是否显示标记
+				if (!showMarkers.value) {
+					toggleMarkersVisibility();
+					toggleMarkersVisibility();
+				}
+			} catch (displayError) {
+				console.error('显示标记时出错:', displayError);
+			}
+		};
+		
+		// 根据标记类型获取图标
+		const getIconForType = (type) => {
+			// 使用已导入的SVG图标
+			if (markerIconsBase64 && markerIconsBase64[type]) {
+				return markerIconsBase64[type];
+			}
+			
+			// 备用图标路径
+			const iconMap = {
+				'general': '/static/images/marker.png',
+				'pet_friendly': '/static/images/pet-marker.png',
+				'danger': '/static/images/danger-marker.png',
+				'scenic': '/static/images/park-marker.png',
+				'pet_service': '/static/images/shop-marker.png',
+				'custom': '/static/images/marker.png'
+			};
+			
+			return iconMap[type] || iconMap.general;
+		};
+		
+		// 标记类型的中文名称
+		const getMarkerTypeName = (type) => {
+			// 处理空值或未定义的情况
+			if (!type) return '普通标记';
+			
+			const typeMap = {
+				'general': '普通标记',
+				'pet_friendly': '宠物友好',
+				'danger': '危险区域',
+				'scenic': '风景区',
+				'pet_service': '宠物服务',
+				'custom': '自定义'
+			};
+			return typeMap[type] || '未知类型';
+		};
+		
+		// 获取标记类型图标
+		const getMarkerTypeIcon = (type) => {
+			// 处理空值或未定义的情况
+			if (!type) return '📍';
+			
+			const iconMap = {
+				'general': '📍',
+				'pet_friendly': '🐾',
+				'danger': '⚠️',
+				'scenic': '🏞️',
+				'pet_service': '🏥',
+				'custom': '✨'
+			};
+			return iconMap[type] || '📍';
+		};
+		
+		// 获取标记类型颜色
+		const getMarkerColor = (type) => {
+			// 处理空值或未定义的情况
+			if (!type) return '#4285F4';
+			
+			const colorMap = {
+				'general': '#4285F4',
+				'pet_friendly': '#34A853',
+				'danger': '#EA4335',
+				'scenic': '#FBBC05',
+				'pet_service': '#FF7F50',
+				'custom': '#9370DB'
+			};
+			return colorMap[type] || '#4285F4';
+		};
+		
+		// 导航到标记位置
+		const navigateToMarker = (marker) => {
+			if (!marker) return;
+			
+			try {
+				const longitude = marker.longitude || marker.location?.coordinates?.[0];
+				const latitude = marker.latitude || marker.location?.coordinates?.[1];
+				
+				if (longitude && latitude && map.value) {
+					map.value.setCenter([longitude, latitude]);
+					map.value.setZoom(17); // 放大地图
+					showCustomMarkerPopup.value = false; // 关闭弹窗
+					
+					// 显示导航成功提示
+					uni.showToast({
+						title: '正在导航到标记位置',
+						icon: 'none',
+						duration: 1500
+					});
+				}
+			} catch (error) {
+				console.error('导航到标记位置失败:', error);
+			}
+		};
+		
+			// 显示标记详情弹窗
+	const showMarkerPopup = (marker) => {
+		if (!marker) return;
+		
+		try {
+			console.log('显示标记详情弹窗, 原始数据:', marker);
+			
+			// 确保marker数据完整
+			let actualMarker = marker;
+			
+			// 如果传入的是AMap.Marker对象，从其extData中获取标记数据
+			if (marker instanceof AMap.Marker) {
+				const extData = marker.getExtData();
+				if (extData && extData.marker) {
+					actualMarker = extData.marker;
+					console.log('从标记extData中获取到标记数据:', actualMarker);
+				} else if (extData && extData.id) {
+					// 尝试通过ID从store中获取完整的标记数据
+					const storeMarker = markerStore.markers.find(m => m._id === extData.id);
+					if (storeMarker) {
+						actualMarker = storeMarker;
+						console.log('从store中获取到标记数据:', actualMarker);
+					}
+				} else {
+					console.warn('标记不包含有效的extData数据');
+				}
+			}
+			
+			// 确保标记数据有标题和类型
+			if (!actualMarker.title) {
+				actualMarker.title = '未命名标记';
+			}
+				if (!actualMarker.type) {
+					actualMarker.type = 'general';
+				}
+				
+				console.log('处理后的标记数据:', actualMarker);
+				
+				// 保存当前选中的标记
+				markerStore.setSelectedMarker(actualMarker);
+				
+				// 处理可能的不同坐标格式
+				const longitude = actualMarker.longitude || actualMarker.location?.coordinates?.[0];
+				const latitude = actualMarker.latitude || actualMarker.location?.coordinates?.[1];
+				
+				// 添加视觉反馈效果 - 高亮显示选中的标记
+				if (marker instanceof AMap.Marker && typeof marker.setAnimation === 'function') {
+					try {
+						// 创建一个临时动画效果
+						marker.setAnimation('AMAP_ANIMATION_BOUNCE');
+						// 2秒后停止动画
+						setTimeout(() => {
+							if (marker && typeof marker.setAnimation === 'function') {
+								marker.setAnimation(null);
+							}
+						}, 2000);
+					} catch (animError) {
+						console.warn('设置标记动画效果失败:', animError);
+						// 使用备用方案：改变标记的zIndex使其显示在顶层
+						if (typeof marker.setzIndex === 'function') {
+							marker.setzIndex(999);
+						}
+					}
+				}
+				
+				// 检查标记是否有图片
+				if (actualMarker.images && actualMarker.images.length > 0) {
+					// 确保标记数据已存储到store中
+					console.log('标记包含图片，跳转到详情页面');
+					
+					// 确保用户信息是对象而非ID
+					if (actualMarker.user && typeof actualMarker.user === 'string') {
+						// 如果只有用户ID，先进行简单的初始化以避免页面报错
+						console.log('标记只包含用户ID，初始化基本用户对象');
+						
+						// 在详情页会重新获取完整用户信息
+						// 这里只是为了避免页面显示错误
+						if (!actualMarker._processedUserInfo) {
+							actualMarker._processedUserInfo = true; // 标记已处理
+							actualMarker._originalUserId = actualMarker.user; // 保存原始ID
+						}
+					}
+					
+					// 优先使用标记ID跳转，确保详情页可以获取完整数据
+					const markerId = actualMarker._id;
+					if (markerId) {
+						uni.navigateTo({
+							url: `/pages/map/marker-detail?id=${markerId}`
+						});
+					} else {
+						// 备用方案：如果没有ID，使用其他信息
+						uni.showToast({
+							title: '无法获取标记详情',
+							icon: 'none'
+						});
+					}
+				} else {
+					// 如果没有图片，使用自定义弹窗
+					// 确保selectedMarker已定义
+					if (typeof selectedMarker !== 'undefined' && selectedMarker !== null) {
+						selectedMarker.value = actualMarker;
+						showCustomMarkerPopup.value = true;
+					} else {
+						console.error('selectedMarker未定义');
+						// 降级为简单的模态框
+						uni.showModal({
+							title: actualMarker.title || '未命名标记',
+							content: actualMarker.description || '无描述信息',
+							showCancel: true,
+							cancelText: '关闭',
+							confirmText: '导航',
+							success: (res) => {
+								if (res.confirm && longitude && latitude && map.value) {
+									map.value.setCenter([longitude, latitude]);
+									map.value.setZoom(17);
+								}
+							}
+						});
+					}
+				}
+			} catch (error) {
+				console.error('显示标记信息失败:', error);
+				uni.showToast({
+					title: '显示标记信息失败',
+					icon: 'none'
+				});
+			}
+		};
+		
+		// 显示标记详情
+		const showMarkerInfo = (markerData) => {
+			if (!markerData) return;
+			
+			// 设置当前选中的标记
+			markerStore.setCurrentMarker(markerData);
+			
+			// 显示标记详情对话框
+			uni.showModal({
+				title: markerData.title,
+				content: markerData.description || '暂无描述',
+				showCancel: true,
+				cancelText: '关闭',
+				confirmText: '导航',
+				success: (res) => {
+					if (res.confirm) {
+						// 导航到标记位置
+						map.value.setCenter([markerData.longitude, markerData.latitude]);
+						map.value.setZoom(16);
+					}
+				}
+			});
+		};
+		
+		// 添加标记方法
+		const showAddMarkerForm = () => {
+			uni.navigateTo({
+				url: `/pages/map/add-marker?latitude=${currentLocation.value.latitude}&longitude=${currentLocation.value.longitude}`
+			});
+		};
 		
 		// 获取或创建地图实例的通用方法
 		const getMapInstance = () => {
@@ -226,7 +1360,7 @@ export default {
 			}
 			
 			// 获取基础API URL
-			const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+			const baseUrl = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
 			
 			// 如果是相对路径，添加基础URL
 			if (avatarPath.startsWith('/uploads/')) {
@@ -277,8 +1411,8 @@ export default {
 		const myPetsNames = computed(() => myPets.value.map(p => p.name));
 		const selectedPetIndex = ref(0);
 		
-		// 添加缺失的showDebug ref
-		const showDebug = ref(true); // 临时打开调试视图，帮助排查问题
+		// 调试模式控制
+		const showDebug = ref(false); // 默认关闭调试视图，需要时手动开启
 		const debugInfo = ref({
 			markerCount: 0,
 			markerIds: [],
@@ -319,7 +1453,7 @@ export default {
 				console.log('头像计算细节:', {
 					原始路径: userInfo.avatar,
 					是否以上传路径开头: userInfo.avatar.startsWith('/uploads/'),
-					环境变量: import.meta.env.VITE_API_URL || 'http://localhost:5000'
+					环境变量: uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000'
 				});
 				
 				return getFullAvatarUrl(userInfo.avatar, true);
@@ -331,30 +1465,7 @@ export default {
 		});
 		
 		// 用户位置标记
-		const userMarker = computed(() => {
-			if (!currentLocation.value || !currentLocation.value.latitude) {
-				return null;
-			}
-			
-			// 直接使用userAvatar计算属性获取完整头像URL
-			let iconPath = userAvatar.value;
-			
-			console.log('创建用户标记，头像路径:', iconPath);
-			
-			return {
-				id: 'user-location',
-				latitude: currentLocation.value.latitude,
-				longitude: currentLocation.value.longitude,
-				iconPath: iconPath,
-				width: 40,
-				height: 40,
-				rotate: userHeading.value,
-				anchor: {
-					x: 0.5,
-					y: 0.5
-				}
-			};
-		});
+		const userMarker = ref(null);
 		
 		// 合并所有标记点
 		const allMarkers = computed(() => {
@@ -457,16 +1568,37 @@ export default {
 		}
 		
 		// 获取用户附近的其他用户
-		async function getNearbyUsers() {
+		async function getNearbyUsers(retryCount = 0) {
 			try {
+				// 检查依赖条件是否满足
+				if (!map.value) {
+					console.log('地图未准备好，延迟获取附近用户');
+					if (retryCount < 5) {
+						setTimeout(() => getNearbyUsers(retryCount + 1), 1500); // 1.5秒后重试
+					}
+					return Promise.resolve({ success: false, message: '地图未准备好' });
+				}
+				
+				// 检查后端API连接状态
+				if (!isBackendAvailable.value) {
+					console.log('后端API不可用，不获取附近用户');
+					nearbyUsers.value = [];
+					return Promise.resolve({ success: false, message: '后端API不可用' });
+				}
+				
+				// 检查位置共享状态
 				if (!isLocationShared.value) {
 					console.log('位置共享未开启，不获取附近用户');
 					return Promise.resolve({ success: false, message: '位置共享未开启' });
 				}
 				
+				// 检查位置信息
 				if (!currentLocation.value || !currentLocation.value.latitude || !currentLocation.value.longitude) {
-					console.error('当前位置不可用，无法获取附近用户');
-					return Promise.reject(new Error('当前位置不可用'));
+					console.error('当前位置不可用，稍后重试获取附近用户');
+					if (retryCount < 5) {
+						setTimeout(() => getNearbyUsers(retryCount + 1), 1500); // 1.5秒后重试
+					}
+					return Promise.resolve({ success: false, message: '当前位置不可用' });
 				}
 				
 				console.log('获取附近用户...');
@@ -505,6 +1637,14 @@ export default {
 					latitude: currentLocation.value.latitude,
 					longitude: currentLocation.value.longitude,
 					maxDistance: 5000 // 搜索5公里范围内的用户
+				}).catch(err => {
+					console.error('位置API错误:', err);
+					// 在API错误时重试
+					if (retryCount < 3) {
+						console.log(`获取附近用户失败，${retryCount + 1}/3次重试`);
+						setTimeout(() => getNearbyUsers(retryCount + 1), 2000);
+					}
+					return { success: false, message: '位置API错误' };
 				});
 				
 				if (response && response.success && Array.isArray(response.data)) {
@@ -547,7 +1687,7 @@ export default {
 					console.log('获取到附近用户:', nearbyUsers.value.length);
 					
 					// 记录所有用户ID，方便调试
-					console.log('用户ID列表:', nearbyUsers.value.map(u => u?.id || '未知ID'));
+					
 					
 					return Promise.resolve(response);
 				} else {
@@ -570,6 +1710,12 @@ export default {
 						console.log('API失败，且无当前用户信息，nearbyUsers为空');
 					}
 					
+					// 如果是第一次尝试，并且需要用户信息但返回错误，尝试再次获取
+					if (retryCount < 3 && (!userStore.userInfo || !currentLocation.value)) {
+						console.log(`API失败，${retryCount + 1}/3次重试`);
+						setTimeout(() => getNearbyUsers(retryCount + 1), 2000);
+					}
+					
 					return Promise.resolve({ success: false, message: '无附近用户', response });
 				}
 			} catch (error) {
@@ -590,6 +1736,12 @@ export default {
 				} else {
 					nearbyUsers.value = [];
 					console.log('异常情况下，且无当前用户信息，nearbyUsers为空');
+				}
+				
+				// 在发生异常情况下也重试几次
+				if (retryCount < 3) {
+					console.log(`异常情况，${retryCount + 1}/3次重试`);
+					setTimeout(() => getNearbyUsers(retryCount + 1), 2000);
 				}
 				
 				return Promise.reject(error);
@@ -863,10 +2015,20 @@ export default {
 			uni.getLocation({
 				type: 'gcj02',
 				success: (res) => {
+					console.log('获取当前位置成功:', res);
 					updateLocation({
 						latitude: res.latitude,
 						longitude: res.longitude
 					});
+					
+					// 成功获取位置后，立即尝试将地图中心设置到当前位置
+					if (map.value) {
+						console.log('位置获取成功，立即将地图中心设置到当前位置');
+						map.value.setCenter([res.longitude, res.latitude]);
+						map.value.setZoom(16);
+					} else {
+						console.log('地图尚未初始化，无法设置中心点');
+					}
 					
 					// 第一次获取位置成功后，如果未决定是否共享位置，显示提示
 					if (!userStore.hasDecidedLocationSharing) {
@@ -891,68 +2053,33 @@ export default {
 								// 监听定位变化
 								geolocation.getCurrentPosition(function(status, result) {
 									if (status === 'complete') {
-										// 高德地图返回的方向信息
-										console.log('高德定位结果:', result);
-										if (result.heading !== undefined && result.heading !== null) {
-											userHeading.value = result.heading;
-											console.log('高德地图方向:', result.heading);
-										}
-										
 										// 更新位置
 										if (result.position) {
 											currentLocation.value = {
 												latitude: result.position.lat,
 												longitude: result.position.lng
 											};
+											
+											// 更新地图中心
+											if (map.value) {
+												map.value.setCenter([result.position.lng, result.position.lat]);
+											}
 										}
 									} else {
 										console.log('高德地图定位失败', result);
 									}
 								});
-								
-								// 监听方向变化（如果设备支持）
-								if (navigator.geolocation && navigator.geolocation.watchPosition) {
-									navigator.geolocation.watchPosition(
-										function(pos) {
-											if (pos.coords.heading !== null && pos.coords.heading !== undefined) {
-												userHeading.value = pos.coords.heading;
-												console.log('设备方向:', pos.coords.heading);
-											}
-										},
-										function(err) {
-											console.log('获取设备方向失败:', err);
-										},
-										{
-											enableHighAccuracy: true,
-											maximumAge: 0
-										}
-									);
-								}
 							});
 						} catch (error) {
 							console.error('高德地图初始化失败:', error);
 						}
 					}
 					
-					// 启动设备方向监听
-					if (typeof uni.onDeviceMotionChange === 'function') {
-						uni.startDeviceMotionListening({
-							interval: 'game',
-							success: () => {
-								console.log('设备方向监听启动成功');
-							},
-							fail: (err) => {
-								console.error('设备方向监听启动失败', err);
-							}
-						});
-						
-						uni.onDeviceMotionChange((res) => {
-							// alpha对应设备绕z轴的旋转角度，在地图上相当于朝向
-							if (res.alpha !== undefined) {
-								userHeading.value = res.alpha;
-								console.log('设备方向更新:', res.alpha);
-							}
-						});
+					// 如果已定义了方向处理函数，则使用它
+					if (typeof handleDeviceOrientation === 'function') {
+						const orientationHandler = handleDeviceOrientation();
+					} else {
+						console.warn('方向处理函数未定义，将使用基本方向检测');
 					}
 				},
 				fail: (err) => {
@@ -964,11 +2091,49 @@ export default {
 				}
 			});
 			
-			// 持续监听位置变化
+			// 持续监听位置变化 - 使用智能更新策略
 			locationUpdateInterval.value = setInterval(() => {
+				// 检查应用是否处于前台
+				const isAppActive = true; // uni-app暂不支持直接检测前台状态，默认为true
+				
+				// 根据应用状态和行走状态决定更新频率
+				const updateFrequency = isWalking.value ? 5 : (isAppActive ? 15 : 30);
+				
+				// 判断是否需要本次更新（基于上次更新时间）
+				const now = Date.now();
+				const lastUpdateTime = locationLastUpdateTime.value || 0;
+				const timeDiff = now - lastUpdateTime;
+				
+				// 时间间隔不足，跳过本次更新
+				if (timeDiff < updateFrequency * 1000) {
+					console.log(`距上次位置更新仅${Math.floor(timeDiff/1000)}秒，未达到${updateFrequency}秒更新间隔`);
+					return;
+				}
+				
+				// 记录本次更新时间
+				locationLastUpdateTime.value = now;
+				
 				uni.getLocation({
 					type: 'gcj02',
 					success: (res) => {
+						// 记录上一次有效位置，用于计算移动距离
+						const prevLat = currentLocation.value?.latitude;
+						const prevLng = currentLocation.value?.longitude;
+						
+						// 如果存在上一次位置，计算移动距离
+						if (prevLat && prevLng) {
+							const moveDistance = calculateDistance(
+								prevLat, prevLng, 
+								res.latitude, res.longitude
+							);
+							
+							// 移动距离过小且不在行走模式，可能是GPS漂移，忽略更新
+							if (moveDistance < 5 && !isWalking.value) {
+								console.log(`位置变化太小(${moveDistance.toFixed(2)}米)，忽略更新`);
+								return;
+							}
+						}
+						
 						// 获取方向信息（如果设备支持）
 						if (typeof uni.onCompassChange === 'function') {
 							uni.onCompassChange((compass) => {
@@ -991,7 +2156,7 @@ export default {
 						}
 					}
 				});
-			}, 10000); // 每10秒更新一次位置
+			}, 5000); // 每5秒检查一次是否需要更新位置
 			
 			// 获取附近用户位置
 			nearbyUsersUpdateInterval.value = setInterval(() => {
@@ -1111,7 +2276,7 @@ export default {
 			}
 		}
 
-		// 创建用户标记（使用图片）
+		// 创建用户标记（使用图片，优化版）
 		const createUserMarkerWithImage = (userId, position, imageUrl) => {
 			// 确保map.value已初始化
 			if (!map.value) {
@@ -1136,6 +2301,25 @@ export default {
 			
 			try {
 				console.log('开始创建用户标记，用户ID:', userId);
+				
+				// 使用头像URL（优先使用传入的URL，其次是用户头像）
+				const finalImageUrl = imageUrl || userAvatar.value;
+				
+				// 检查缓存中是否已有处理过的头像图片
+				const cachedImage = avatarCache.get(finalImageUrl);
+				if (cachedImage) {
+					console.log('使用缓存的头像图像:', finalImageUrl.substring(0, 50) + '...');
+					
+					// 直接使用缓存的图像创建标记
+					createMarkerWithProcessedImage(userId, position, cachedImage);
+					return;
+				}
+				
+				// 如果是base64编码的图像，直接处理
+				if (finalImageUrl.startsWith('data:image')) {
+					processImageAndCreateMarker(userId, position, finalImageUrl);
+					return;
+				}
 				
 				// 画布大小和图像大小
 				const canvasSize = 60;
@@ -1190,6 +2374,9 @@ export default {
 						// 将画布转换为base64图像
 						const markerImage = canvas.toDataURL('image/png');
 						
+						// 保存到缓存
+						avatarCache.put(finalImageUrl, markerImage);
+						
 						// 确保userMarkers对象已初始化
 						if (typeof userMarkers !== 'object') {
 							console.warn('userMarkers未定义，初始化为空对象');
@@ -1205,8 +2392,12 @@ export default {
 								imageSize: new AMap.Size(canvasSize, canvasSize)
 							}),
 							offset: new AMap.Pixel(-canvasSize/2, -canvasSize/2),
-							zIndex: 100,
-							extData: { userId: userId, type: 'user' }
+							zIndex: 100, // 高z-index确保显示在最上层
+							extData: { 
+								userId: userId, 
+								type: 'user',
+								isUserMarker: true // 添加标识，表明这是用户头像标记
+							}
 						});
 						
 						// 将标记添加到地图
@@ -1442,24 +2633,11 @@ export default {
 				}
 			}, 2000); // 每2秒检查一次
 			
-			// 确保获取用户宠物数据
-			if (userStore.isAuthenticated) {
-				// 加载宠物数据
-				console.log('加载用户宠物数据');
-				petStore.fetchPets().then(pets => {
-					console.log('成功获取宠物数据:', pets);
-					// 更新myPets变量以供其他组件使用
-					myPets.value = pets;
-				}).catch(err => {
-					console.error('获取宠物数据失败:', err);
-				});
-			}
+			// 恢复标记缓存
+			markerStore.restoreMarkerCache();
 			
 			// 首先初始化用户认证状态
 			await initUserAuth();
-			
-			// 获取地图上下文
-			const mapContext = uni.createMapContext('map');
 			
 			// 显示用户头像调试信息
 			console.log('初始用户信息:', userStore.userInfo || userStore.user);
@@ -1477,182 +2655,255 @@ export default {
 				}
 			}
 			
-			// 开始监听位置
-			startLocationWatch();
-			
-			// 获取附近用户
-			getNearbyUsers();
-			
-			// 获取我的宠物
-			fetchMyPets();
-			
-			// 等待DOM渲染完成
-			await nextTick();
-			
-			// 初始化高德地图
-			const initAMap = () => {
-				setTimeout(() => {
-					const mapContainer = document.getElementById('map-container');
-					if (!mapContainer) {
-						console.error('地图容器元素未找到!');
-						return;
-					}
-					
-					console.log('地图容器已加载，初始化高德地图');
-					
-					try {
-						// 检查AMap是否已加载
-						if (typeof window.AMap === 'undefined') {
-							console.log('AMap未定义，动态加载脚本');
-							
-							// 动态加载高德地图脚本
-							const script = document.createElement('script');
-							// 使用环境变量中的高德地图API密钥或设置一个默认的开发密钥
-							const amapKey = import.meta.env.VITE_AMAP_KEY || '36b5c28cb6ddb8426b802b4d88068afa';
-							script.src = `https://webapi.amap.com/maps?v=2.0&key=${amapKey}`;
-							script.async = true;
-							
-							script.onload = () => {
-								console.log('高德地图脚本已加载');
-								// 检查AMap是否成功加载
-								if (typeof window.AMap !== 'undefined') {
-									console.log('AMap加载成功，版本:', window.AMap.version);
-									// 初始化地图
-									initMap();
-								} else {
-									console.error('脚本加载完成，但AMap对象仍然未定义');
-									uni.showToast({
-										title: '地图初始化失败',
-										icon: 'none'
-									});
-								}
-							};
-							
-							script.onerror = (error) => {
-								console.error('加载高德地图脚本失败:', error);
-								uni.showToast({
-									title: '地图服务加载失败',
-									icon: 'none'
-								});
-							};
-							
-							document.head.appendChild(script);
-						} else {
-							// AMap已存在，直接初始化地图
-							console.log('AMap已加载，直接初始化地图');
-							initMap();
-						}
-					} catch (e) {
-						console.error('初始化高德地图过程中出错:', e);
-					}
-				}, 1000);
-			};
-			
-			// 添加初始化地图的函数
-			const initMap = () => {
+			// 添加后端API连接检查函数
+			const checkBackendConnection = async () => {
 				try {
-					// 检查AMap是否可用
-					if (typeof window.AMap === 'undefined') {
-						console.error('AMap对象仍然未定义，无法初始化地图');
-						uni.showToast({
-							title: '地图加载失败，请刷新页面',
-							icon: 'none',
-							duration: 3000
+					console.log('检查后端API连接状态...');
+					// 使用一个基本的API端点，如根路径或已知存在的端点
+					const resp = await request({
+						url: '/api', // 或者任何确定存在的API端点
+						method: 'GET',
+						timeout: 5000
+					}).catch(error => {
+						// 尝试备用端点
+						return request({
+							url: '/api/users/ping', // 尝试用户API的ping端点
+							method: 'GET',
+							timeout: 5000
 						});
-						return;
-					}
+					});
 					
-					console.log('准备初始化地图，AMap版本:', window.AMap.version);
+					console.log('后端API连接正常:', resp);
+					isBackendAvailable.value = true;
+				} catch (error) {
+					console.error('后端API连接失败:', error);
+					isBackendAvailable.value = false;
 					
-					if (!map.value) {
-						// 初始化地图对象
-						const mapOptions = {
-							zoom: 15,
-							center: [currentLocation.value.longitude, currentLocation.value.latitude],
-							resizeEnable: true
-						};
-						
-						console.log('地图初始化参数:', mapOptions);
-						
-						// 确保DOM元素存在
-						const mapContainer = document.getElementById('map-container');
-						if (!mapContainer) {
-							console.error('找不到地图容器元素(#map-container)');
-							return;
-						}
-						
-						try {
-							map.value = new window.AMap.Map('map-container', mapOptions);
-							// 保存到全局对象以便在其他函数中访问
-							if (typeof window !== 'undefined') {
-								window.__dogRunMapInstance = map.value;
-							}
-							console.log('高德地图初始化完成');
-						} catch (mapError) {
-							console.error('创建地图实例时发生错误:', mapError);
-							uni.showToast({
-								title: '创建地图失败: ' + mapError.message,
-								icon: 'none',
-								duration: 3000
-							});
-							return;
-						}
-								
-						// 地图加载完成后再创建用户标记
-						map.value.on('complete', () => {
-							console.log('地图加载完成，创建用户标记');
-							
-							// 将地图实例存储在DOM元素中
-							if (mapContainer) {
-								mapContainer.__amap_instance__ = map.value;
-							}
-							
-							// 简化地图标记创建条件，只需要位置信息
-							setTimeout(() => {
-								if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
-									console.log('开始创建初始用户标记');
-									// 使用toggleMarker创建用户标记
-									toggleMarker();
-									console.log('初始用户标记已创建');
-								} else {
-									console.warn('无法创建用户标记：位置不可用');
-								}
-							}, 1000);
-						});
-
-						// 添加点击事件
-						map.value.on('click', (e) => {
-							console.log('高德地图点击事件:', e);
-							
-							// 模拟标准点击事件格式
-							onMapTap({
-								detail: {
-									x: e.pixel.x,
-									y: e.pixel.y
-								}
-							});
-						});
-								
-						// 设置标记点击处理器
-						setTimeout(setupMarkerClickHandlers, 2000);
-					} else {
-						console.log('地图已经初始化，不需要重复创建');
-					}
-				} catch (e) {
-					console.error('创建地图实例失败:', e);
-					// 显示错误提示
-					uni.showToast({
-						title: '地图初始化失败，请重试',
-						icon: 'none',
-						duration: 3000
+					// 显示友好的错误信息
+					uni.showModal({
+						title: '连接问题',
+						content: '无法连接到服务器，部分功能可能不可用。请检查网络连接或稍后重试。',
+						showCancel: false
 					});
 				}
 			};
+
+			// 带超时的位置获取函数
+			const getLocationWithTimeout = (timeout = 8000) => {
+				return new Promise((resolve, reject) => {
+					const timer = setTimeout(() => {
+						console.log('获取位置超时');
+						reject(new Error('获取位置超时'));
+					}, timeout);
+					
+					uni.getLocation({
+						type: 'gcj02',
+						success: (res) => {
+							clearTimeout(timer);
+							resolve({
+								latitude: res.latitude,
+								longitude: res.longitude
+							});
+						},
+						fail: (err) => {
+							clearTimeout(timer);
+							console.error('获取位置失败:', err);
+							reject(err);
+						}
+					});
+				});
+			};
+
+			// 使用确定的位置初始化地图
+			const initAMapWithLocation = (location) => {
+				if (!location || typeof location.latitude === 'undefined') {
+					console.error('初始化地图需要有效的位置信息');
+					return;
+				}
+				
+				try {
+					console.log('使用确定位置初始化地图:', location);
+					
+					if (typeof window.AMap === 'undefined') {
+						console.error('AMap未加载');
+						
+						// 尝试加载高德地图SDK
+						window.onAMapLoaded = () => initAMapWithLocation(location);
+						const script = document.createElement('script');
+						script.type = 'text/javascript';
+						script.async = true;
+						script.src = 'https://webapi.amap.com/maps?v=2.0&key=9ea84b4333b114c188a67cb42564a48f&callback=onAMapLoaded';
+						document.head.appendChild(script);
+						return;
+					}
+					
+					// 检查DOM元素存在
+					const mapContainer = document.getElementById('map-container');
+					if (!mapContainer) {
+						console.error('找不到地图容器元素(#map-container)');
+						return;
+					}
+					
+					// 创建地图实例
+					map.value = new window.AMap.Map('map-container', {
+						zoom: 16,
+						center: [location.longitude, location.latitude],
+						resizeEnable: true,
+						animateEnable: true
+					});
+					
+					// 保存到全局
+					if (typeof window !== 'undefined') {
+						window.__dogRunMapInstance = map.value;
+					}
+					
+					console.log('高德地图初始化完成');
+					
+					// 地图加载完成后执行后续操作
+					map.value.on('complete', () => {
+						console.log('地图加载完成，创建用户标记和加载标记数据');
+						
+						// 确保地图中心点正确
+						map.value.setCenter([location.longitude, location.latitude]);
+						
+						// 创建用户标记
+						setTimeout(() => {
+							toggleMarker();
+							// 加载标记数据
+							loadMarkers();
+							// 位置数据就绪后再获取附近用户
+							getNearbyUsers();
+						}, 800);
+					});
+					
+					// 添加点击事件
+					map.value.on('click', (e) => {
+						console.log('高德地图点击事件:', e);
+						
+						// 模拟标准点击事件格式
+						onMapTap({
+							detail: {
+								x: e.pixel.x,
+								y: e.pixel.y
+							}
+						});
+					});
+							
+					// 设置标记点击处理器
+					setTimeout(setupMarkerClickHandlers, 2000);
+				} catch (e) {
+					console.error('初始化地图出错:', e);
+					uni.showToast({
+						title: '地图初始化失败，请重试',
+						icon: 'none'
+					});
+				}
+			};
+
+			// 优化的地图初始化流程
+			const initMapFlow = async () => {
+				// 显示加载提示
+				uni.showLoading({
+					title: '正在定位...',
+					mask: true
+				});
+				
+				try {
+					// 尝试从缓存获取上次位置作为临时位置
+					const cachedLocationStr = uni.getStorageSync('last_known_location');
+					let tempLocation = null;
+					
+					if (cachedLocationStr) {
+						try {
+							const cached = JSON.parse(cachedLocationStr);
+							// 确保缓存位置不超过24小时
+							if (cached && cached.timestamp && (Date.now() - cached.timestamp) < 86400000) {
+								tempLocation = {
+									latitude: cached.latitude,
+									longitude: cached.longitude
+								};
+								console.log('使用缓存位置作为临时位置', tempLocation);
+								
+								// 提前更新currentLocation但不初始化地图
+								currentLocation.value = tempLocation;
+							}
+						} catch (e) {
+							console.warn('解析缓存位置失败', e);
+						}
+					}
+					
+					// 获取实际位置（设置超时保证不会无限等待）
+					const actualLocation = await getLocationWithTimeout(10000).catch(err => {
+						console.warn('获取实际位置失败，使用备选方案', err);
+						return null;
+					});
+					
+					// 隐藏加载提示
+					uni.hideLoading();
+					
+					// 更新currentLocation
+					if (actualLocation) {
+						currentLocation.value = actualLocation;
+						console.log('获取到实际位置:', actualLocation);
+						
+						// 保存位置到缓存
+						uni.setStorageSync('last_known_location', JSON.stringify({
+							...actualLocation,
+							timestamp: Date.now()
+						}));
+					} else if (!currentLocation.value) {
+						// 如果没有实际位置也没有缓存位置，才使用默认位置
+						currentLocation.value = { latitude: 31.31, longitude: 121.52 }; // 上海位置替代北京
+						console.warn('无法获取位置，使用默认上海位置');
+					}
+					
+					// 启动位置监听
+					startLocationWatch();
+					
+					// 仅在位置就绪后初始化地图
+					initAMapWithLocation(currentLocation.value);
+					
+					// 获取用户宠物数据
+					fetchMyPets();
+					
+					// 检查后端API连接
+					checkBackendConnection();
+					
+				} catch (error) {
+					uni.hideLoading();
+					console.error('初始化地图流程出错:', error);
+					uni.showToast({
+						title: '定位失败，使用默认位置',
+						icon: 'none'
+					});
+					
+					// 出错时使用默认位置
+					if (!currentLocation.value) {
+						currentLocation.value = { latitude: 31.31, longitude: 121.52 }; // 上海位置
+					}
+					
+					// 启动位置监听
+					startLocationWatch();
+					
+					// 仍然初始化地图
+					initAMapWithLocation(currentLocation.value);
+				}
+			};
 			
-			// 执行初始化
-			initAMap();
+			// 执行地图初始化流程
+			initMapFlow();
 			
 			console.log('组件挂载完成');
+		});
+		
+		// 监听页面显示
+		onShow(() => {
+			console.log('地图页面显示');
+			// 如果地图已经初始化，刷新标记数据
+			if (map.value) {
+				console.log('刷新地图标记数据');
+				loadMarkers();
+			}
 		});
 		
 		// 预加载图片
@@ -1684,9 +2935,9 @@ export default {
 					// 尝试不同的基础URL
 					let newSrc = src;
 					if (retryCount === 1) {
-						newSrc = 'http://localhost:5000' + src;
+						newSrc = (uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000') + src;
 					} else if (retryCount === 2) {
-						newSrc = 'http://localhost:3000' + src;
+						newSrc = (uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000') + src;
 					} else if (retryCount === 3) {
 						newSrc = window.location.origin + src;
 					}
@@ -1734,7 +2985,7 @@ export default {
 			}
 		});
 		
-		// 强制刷新用户标记
+		// 强制刷新用户标记（优化版）
 		function forceRefreshMarker(forceUseUploaded = false) {
 			// 确保有位置信息
 			if (!currentLocation.value || typeof currentLocation.value.latitude === 'undefined') {
@@ -1746,43 +2997,54 @@ export default {
 				return;
 			}
 			
-			// 检查userStore状态
-			console.log('==== 用户信息调试 ====');
-			console.log('userStore.userInfo:', userStore.userInfo);
-			console.log('userStore.token:', userStore.token);
-			console.log('userStore.isAuthenticated:', userStore.isAuthenticated);
-			console.log('==== 头像信息调试 ====');
-			console.log('原始头像路径:', userStore.userInfo?.avatar);
+			// 如果需要强制清除头像缓存
+			if (forceUseUploaded) {
+				console.log('强制清除头像缓存，使用最新上传的头像');
+				avatarCache.clear();
+			}
+			
+			// 获取用户ID和位置
+			const userId = userStore.userInfo?.id || 'current-user-location';
+			const position = [currentLocation.value.longitude, currentLocation.value.latitude];
 			
 			// 先清理所有当前用户的标记
 			if (map.value) {
 				const allMapMarkers = map.value.getAllOverlays('marker');
-				console.log(`清理前地图上有 ${allMapMarkers.length} 个标记`);
+				const markersToRemove = [];
 				
-				// 移除所有与当前用户相关的标记，包括"current-user-location"标记
+				// 找出所有与当前用户相关的标记
 				allMapMarkers.forEach(marker => {
 					try {
 						const markerId = marker?.getExtData?.()?.userId;
 						if (markerId === 'current-user-location' || 
 							(userStore.userInfo && markerId === userStore.userInfo.id)) {
-							console.log(`移除用户标记: ${markerId}`);
-							map.value.remove(marker);
-							// 同时从userMarkers对象中移除
-							if (userMarkers[markerId]) {
-								delete userMarkers[markerId];
-							}
+							markersToRemove.push(marker);
 						}
 					} catch (err) {
 						console.error('处理标记时出错:', err);
 					}
 				});
 				
-				// 短暂延迟后再创建新标记，确保旧标记被完全清理
-				setTimeout(() => {
-					// 创建新标记，现在只会创建一个
-					console.log('创建新的用户标记');
-					toggleMarker();
-				}, 100);
+				// 批量移除标记（性能更好）
+				if (markersToRemove.length > 0) {
+					console.log(`移除 ${markersToRemove.length} 个用户标记`);
+					map.value.remove(markersToRemove);
+					
+					// 同时从userMarkers对象中移除
+					markersToRemove.forEach(marker => {
+						const markerId = marker?.getExtData?.()?.userId;
+						if (markerId && userMarkers[markerId]) {
+							delete userMarkers[markerId];
+						}
+					});
+				}
+				
+				// 创建新标记 - 使用新的高效函数
+				console.log('创建新的用户标记，用户ID:', userId);
+				
+				// 使用当前用户头像
+				const avatarUrl = userAvatar.value;
+				createUserMarkerWithImage(userId, position, avatarUrl);
 			}
 		}
 
@@ -1949,61 +3211,112 @@ export default {
 			}
 		}
 
-		// 清除头像缓存
+		// 清除头像缓存（优化版）
 		async function clearAvatarCache() {
 			try {
 				console.log('开始清除头像缓存...');
 				
-				// 1. 尝试清除本地存储中的用户信息
+				// 1. 清除我们的内存缓存
+				avatarCache.clear();
+				
+				// 2. 尝试清除本地存储中的用户信息
 				uni.removeStorageSync('userInfo');
 				console.log('已清除本地用户信息缓存');
 				
-				// 2. 重新获取最新用户信息
+				// 3. 重新获取最新用户信息
 				await userStore.fetchUserInfo();
-				console.log('已重新获取用户信息:', userStore.userInfo);
+				console.log('已重新获取用户信息');
 				
-				// 3. 清除uni的文件缓存(如果有头像)
+				// 4. 清除系统下载缓存(如果有头像URL)
 				if (userStore.userInfo?.avatar) {
-					const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-					const avatarUrl = userStore.userInfo.avatar.startsWith('/uploads/') 
-						? baseUrl + userStore.userInfo.avatar
-						: userStore.userInfo.avatar;
-					
+					// 获取完整头像URL
+					const avatarUrl = getFullAvatarUrl(userStore.userInfo.avatar, true);
 					console.log('清除头像URL缓存:', avatarUrl);
 					
-					// 强制重新下载头像
-					uni.downloadFile({
-						url: avatarUrl,
-						success: (res) => {
-							console.log('头像重新下载成功:', res.tempFilePath);
-							
-							// 使用新下载的头像强制刷新标记
-							createUserMarkerWithImage(res.tempFilePath);
-							
-							uni.showToast({
-								title: '头像缓存已清除',
-								icon: 'success'
+					// 使用uni-app API尝试清除缓存（不同平台支持程度不同）
+					if (uni.removeSavedFile) {
+						try {
+							// 尝试获取本地文件系统中可能存在的缓存文件
+							const fileList = await new Promise((resolve, reject) => {
+								uni.getSavedFileList({
+									success: (res) => resolve(res.fileList || []),
+									fail: () => resolve([])
+								});
 							});
-						},
-						fail: (err) => {
-							console.error('头像重新下载失败:', err);
-							uni.showToast({
-								title: '头像缓存清除失败',
-								icon: 'none'
-							});
+							
+							// 查找可能的头像缓存文件并删除（基于模糊匹配）
+							const avatarFiles = fileList.filter(file => 
+								file.filePath && file.filePath.includes('avatar'));
+							
+							if (avatarFiles.length > 0) {
+								console.log('找到', avatarFiles.length, '个可能的头像缓存文件');
+								for (const file of avatarFiles) {
+									await new Promise(resolve => {
+										uni.removeSavedFile({
+											filePath: file.filePath,
+											success: () => console.log('已删除缓存文件:', file.filePath),
+											complete: resolve
+										});
+									});
+								}
+							}
+						} catch (fsError) {
+							console.warn('清除文件系统缓存时出错:', fsError);
 						}
-					});
+					}
+					
+					// 强制重新获取头像，使用网络请求而不是缓存
+					try {
+						const timestamp = new Date().getTime();
+						const urlWithTimestamp = avatarUrl.includes('?') 
+							? `${avatarUrl}&t=${timestamp}` 
+							: `${avatarUrl}?t=${timestamp}`;
+						
+						uni.downloadFile({
+							url: urlWithTimestamp,
+							success: (res) => {
+								console.log('头像重新下载成功');
+								// 使用新下载的头像强制刷新标记
+								if (userStore.userInfo?.id) {
+									const userId = userStore.userInfo.id;
+									const position = currentLocation.value ? 
+										[currentLocation.value.longitude, currentLocation.value.latitude] : 
+										null;
+									
+									if (position) {
+										createUserMarkerWithImage(userId, position, res.tempFilePath);
+									}
+								}
+							},
+							fail: (err) => {
+								console.error('头像重新下载失败:', err);
+							},
+							complete: () => {
+								// 无论成功失败都提示用户
+								uni.showToast({
+									title: '头像缓存已清除',
+									icon: 'success'
+								});
+							}
+						});
+					} catch (dlError) {
+						console.error('下载头像时出错:', dlError);
+						uni.showToast({
+							title: '头像已清除，但重新获取失败',
+							icon: 'none'
+						});
+					}
 				} else {
 					console.log('用户没有头像，无需清除缓存');
 					uni.showToast({
-						title: '用户没有头像',
+						title: '无头像，已清除用户信息',
 						icon: 'none'
 					});
 				}
 			} catch (error) {
 				console.error('清除头像缓存失败:', error);
 				uni.showToast({
-					title: '缓存清除失败',
+					title: '清除头像缓存出错',
 					icon: 'none'
 				});
 			}
@@ -2330,6 +3643,9 @@ export default {
 
 		// 添加地图拖动状态跟踪
 		const mapIsDragging = ref(false);
+		
+		// 位置更新时间跟踪
+		const locationLastUpdateTime = ref(0);
 
 		// 添加地图开始拖动事件处理
 		function onMapDragStart() {
@@ -2364,50 +3680,23 @@ export default {
 				return;
 			}
 			
-			// 获取页面上所有可见的标记元素
 			try {
-				// 1. 先尝试直接获取高德地图标记
-				const amapMarkers = document.querySelectorAll('.amap-marker');
-				if (amapMarkers.length > 0) {
-					console.log('找到高德地图标记:', amapMarkers.length, '个');
+				// 使用高德地图的方法获取点击位置的标记
+				if (map.value) {
+					const pixel = new AMap.Pixel(x, y);
+					const overlays = map.value.getOverlaysByPixel(pixel);
 					
-					// 检查点击是否在标记元素上
-					for (const marker of amapMarkers) {
-						const rect = marker.getBoundingClientRect();
+					if (overlays && overlays.length > 0) {
+						// 找到最上层的标记
+						const topOverlay = overlays[0];
+						const extData = topOverlay.getExtData();
 						
-						// 检查点击点是否在标记元素的矩形区域内
-						if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-							console.log('点击命中标记元素:', marker);
-							
-							// 尝试从元素获取标记ID
-							const markerId = marker.getAttribute('data-id') || 
-											marker.id || 
-											marker.getAttribute('id');
-							
-							if (markerId) {
-								// 有ID，触发标记点击事件
-								console.log('触发标记点击:', markerId);
-								onMarkerTap({detail: {markerId}});
-								return; // 处理完成，退出函数
-							}
-							
-							// 没有ID，但确实点击了标记，从附近用户中找出最接近的
-							const closestUser = findClosestUserToClick(x, y);
-							if (closestUser) {
-								console.log('找到最接近的用户:', closestUser.nickname || closestUser.username);
-								onMarkerTap({detail: {markerId: closestUser.id}});
-								return;
-							}
+						if (extData && extData.userId) {
+							console.log('点击了用户标记:', extData.userId);
+							processUserMarkerTap(extData.userId);
+							return;
 						}
 					}
-				}
-				
-				// 2. 尝试查找附近用户中最接近点击位置的
-				const closestUser = findClosestUserToClick(x, y);
-				if (closestUser) {
-					console.log('找到最接近的用户:', closestUser.nickname || closestUser.username);
-					onMarkerTap({detail: {markerId: closestUser.id}});
-					return;
 				}
 			} catch (error) {
 				console.error('处理地图点击事件出错:', error);
@@ -3077,7 +4366,7 @@ export default {
 		 */
 		const getUserInfo = async (userId) => {
 			// 获取基础API URL
-			const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+			const baseUrl = import.meta.env.VITE_API_URL || 'http://49.235.65.37:5000';
 			
 			try {
 				const res = await new Promise((resolve, reject) => {
@@ -3232,6 +4521,27 @@ export default {
 			onMapUpdated,
 			hideUserPopup, // 暴露新函数给模板
 			
+			// 添加showMarkerPopup函数到返回对象
+			showMarkerPopup,
+			showCustomMarkerPopup,
+			selectedMarker,
+			getMarkerTypeName,
+			getMarkerTypeIcon,
+			getMarkerColor,
+			navigateToMarker,
+			formatTime: (timestamp) => {
+				if (!timestamp) return '未知时间';
+				const date = new Date(timestamp);
+				return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+			},
+			getUserName: (user) => {
+				if (!user) return '未知用户';
+				if (typeof user === 'string') {
+					return '用户' + user.substr(-4);
+				}
+				return user.nickname || user.username || '未知用户';
+			},
+			
 			// 其他已有函数
 			centerOnUser() {
 				console.log('定位到用户位置');
@@ -3241,10 +4551,39 @@ export default {
 					
 					// 检查位置信息是否有效
 					if (!currentLocation.value || typeof currentLocation.value.latitude === 'undefined') {
-						console.warn('当前位置信息不可用，无法定位');
+						console.warn('当前位置信息不可用，尝试重新获取位置');
+						
+						// 尝试重新获取位置
+						uni.getLocation({
+							type: 'gcj02',
+							success: (res) => {
+								console.log('重新获取位置成功:', res);
+								// 更新当前位置
+								currentLocation.value = {
+									latitude: res.latitude,
+									longitude: res.longitude
+								};
+								
+								// 设置地图中心点到用户位置
+								const pos = [res.longitude, res.latitude];
+								console.log('设置地图中心到:', pos);
+								map.value.setCenter(pos);
+								map.value.setZoom(16);
+								
+								// 显示成功提示
 						uni.showToast({
-							title: '无法获取位置信息',
+									title: '已定位到当前位置',
+									icon: 'none',
+									duration: 1000
+								});
+							},
+							fail: (err) => {
+								console.error('重新获取位置失败:', err);
+								uni.showToast({
+									title: '获取位置失败，请检查定位权限',
 							icon: 'none'
+								});
+							}
 						});
 						return;
 					}
@@ -3437,6 +4776,18 @@ export default {
 					url: '/pages/petIdentify/index'
 				});
 			},
+			showAddMarkerForm,
+			loadMarkers,
+			displayMarkers,
+			showMarkerInfo,
+			toggleMarkersVisibility,
+			// 在script部分添加处理函数
+			navigateToAIMedical() {
+				uni.navigateTo({
+					url: '/pages/ai-medical/index'
+				});
+			},
+			refreshMap,
 		};
 	}
 }
@@ -3486,33 +4837,63 @@ export default {
 }
 
 .toolbar {
-	position: absolute;
-	top: 20px;
-	right: 20px;
+	position: fixed;
+	top: 40rpx;
+	right: 20rpx;
+	background-color: #FFFFFF;
+	border-radius: 20rpx;
+	padding: 2rpx;
+	margin-top: 20rpx;
+	box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.1);
+	z-index: 100;
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
-	z-index: 10;
+	gap: 10rpx;
 }
 
 .toolbar-item {
-	width: 40px;
-	height: 40px;
-	background-color: white;
-	border-radius: 20px;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-	
-	.icon {
-		font-size: 14px;
+	padding: 16rpx;
+	border-radius: 12rpx;
+	background-color: #FFFFFF;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.toolbar-item:active {
+	background-color: #F5F5F5;
+}
+
+.toolbar-item .icon {
+	font-size: 20rpx;
+	margin-bottom: 4rpx;
+}
+
+.toolbar-item .toolbar-text {
+	font-size: 16rpx;
+	color: #333333;
+}
+
+/* 暗黑模式适配 */
+@media (prefers-color-scheme: dark) {
+	.toolbar {
+		background-color: #1C1C1E;
+		box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.3);
 	}
-	
-	.toolbar-text {
-		font-size: 10px;
-		margin-top: 0px;
+
+	.toolbar-item {
+		background-color: #1C1C1E;
+	}
+
+	.toolbar-item:active {
+		background-color: #2C2C2E;
+	}
+
+	.toolbar-item .toolbar-text {
+		color: #FFFFFF;
 	}
 }
 
@@ -3831,6 +5212,34 @@ img.marker-image {
 	pointer-events: none; /* 允许点击穿透到下层元素 */
 	z-index: 5;
 }
+
+/* 刷新地图按钮样式 */
+.refresh-map-btn {
+	position: fixed;
+	right: 20rpx;
+	bottom: 200rpx;
+	z-index: 990;
+	width: 80rpx;
+	height: 80rpx;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+}
+
+.refresh-btn-inner {
+	width: 80rpx;
+	height: 80rpx;
+	background-color: #FFFFFF;
+	border-radius: 50%;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.refresh-icon {
+	font-size: 32rpx;
+}
 </style>
 
 <style>
@@ -3878,7 +5287,176 @@ img.marker-image {
 
 /* 宠物识别按钮样式 */
 .pet-identify {
-	background-color: rgba(255, 127, 80, 0.8);
+	background-color: rgba(246, 187, 91, 0.8);
+}
+
+.ai-medical {
+	background-color: rgba(121, 255, 141, 0.8);
+}
+
+/* 自定义标记弹窗样式 */
+.custom-marker-popup {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 1000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.popup-backdrop {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background-color: rgba(0, 0, 0, 0.5);
+	backdrop-filter: blur(4px);
+}
+
+.popup-content {
+	position: relative;
+	width: 85%;
+	max-width: 600px;
+	background-color: #FFFFFF;
+	border-radius: 16px;
+	box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+	overflow: hidden;
+	z-index: 1001;
+	animation: popup-fade-in 0.3s ease;
+}
+
+@keyframes popup-fade-in {
+	from { opacity: 0; transform: translateY(20px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+.popup-header {
+	padding: 16px 20px;
+	background-color: #F8F8F8;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	border-bottom: 1px solid #EEEEEE;
+}
+
+.popup-title {
+	font-size: 18px;
+	font-weight: bold;
+	color: #333333;
+}
+
+.close-btn {
+	font-size: 24px;
+	color: #999999;
+	width: 36px;
+	height: 36px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 18px;
+	cursor: pointer;
+}
+
+.close-btn:active {
+	background-color: #EEEEEE;
+}
+
+.popup-body {
+	padding: 20px;
+}
+
+.marker-type {
+	display: flex;
+	align-items: center;
+	margin-bottom: 16px;
+}
+
+.marker-type-icon {
+	width: 50px;
+	height: 50px;
+	border-radius: 25px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin-right: 15px;
+}
+
+.type-icon {
+	font-size: 24px;
+	color: #FFFFFF;
+}
+
+.marker-type-name {
+	font-size: 16px;
+	color: #333333;
+	font-weight: 500;
+}
+
+.marker-description {
+	margin: 16px 0;
+	padding: 15px;
+	background-color: #F8F8F8;
+	border-radius: 10px;
+	min-height: 80px;
+}
+
+.description-text {
+	font-size: 15px;
+	line-height: 1.5;
+	color: #333333;
+}
+
+.marker-info {
+	margin-top: 20px;
+}
+
+.info-item {
+	display: flex;
+	align-items: center;
+	padding: 8px 0;
+	border-bottom: 1px solid #EEEEEE;
+}
+
+.info-item:last-child {
+	border-bottom: none;
+}
+
+.info-icon {
+	margin-right: 10px;
+	font-size: 16px;
+}
+
+.info-text {
+	font-size: 14px;
+	color: #666666;
+}
+
+.popup-footer {
+	display: flex;
+	border-top: 1px solid #EEEEEE;
+}
+
+.popup-btn {
+	flex: 1;
+	height: 50px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 16px;
+}
+
+.cancel-btn {
+	color: #666666;
+	border-right: 1px solid #EEEEEE;
+}
+
+.confirm-btn {
+	color: #007AFF;
+	font-weight: bold;
 }
 </style>
 
@@ -3923,3 +5501,914 @@ function testUserPopup(userId) {
 	
 	console.log('已显示测试用户弹窗，用户ID:', userId);
 }
+
+.add-marker-btn {
+	position: fixed;
+	top: 120rpx;
+	right: 20rpx;
+	background-color: #007AFF;
+	padding: 16rpx 32rpx;
+	border-radius: 40rpx;
+	display: flex;
+	align-items: center;
+	gap: 12rpx;
+	box-shadow: 0 4rpx 12rpx rgba(0, 122, 255, 0.3);
+	z-index: 999;
+}
+
+.add-marker-btn .btn-text {
+	color: #FFFFFF;
+	font-size: 28rpx;
+}
+
+/* 暗黑模式适配 */
+@media (prefers-color-scheme: dark) {
+	.add-marker-btn {
+		background-color: #0A84FF;
+	}
+}
+
+// 在 setup() 函数中添加
+function showAddMarkerForm() {
+	// 显示添加标记表单，传递当前位置信息
+	uni.navigateTo({
+		url: `/pages/map/add-marker?latitude=${currentLocation.value.latitude}&longitude=${currentLocation.value.longitude}`
+	});
+}
+
+// 修改获取位置的方法，确保在加载地图前获取到位置信息
+// 在初始化位置获取函数之前添加位置准备状态
+const locationReady = ref(false);
+const locationError = ref(null);
+
+async function getInitialLocation() {
+  return new Promise((resolve, reject) => {
+    console.log('获取初始位置...');
+    
+    // 检查缓存中是否有上次的位置信息
+    const cachedLocation = uni.getStorageSync('last_known_location');
+    if (cachedLocation) {
+      try {
+        const parsedLocation = JSON.parse(cachedLocation);
+        const timestamp = parsedLocation.timestamp || 0;
+        const now = Date.now();
+        const ageInMinutes = (now - timestamp) / (60 * 1000);
+        
+        // 如果缓存的位置不超过24小时，先使用它
+        if (ageInMinutes < 1440 && 
+            parsedLocation.latitude && 
+            parsedLocation.longitude) {
+          console.log('使用缓存的位置信息（临时）:', parsedLocation);
+          
+          // 临时更新位置，但仍然尝试获取新位置
+          currentLocation.value = {
+            latitude: parsedLocation.latitude,
+            longitude: parsedLocation.longitude
+          };
+          // 不设置locationReady，因为我们还将尝试获取真实位置
+        }
+      } catch (parseError) {
+        console.warn('解析缓存位置失败:', parseError);
+      }
+    }
+
+    // 使用一个合理的默认位置（中国地图中心位置附近）
+    // 相比北京更接近中心位置
+    const defaultLocation = { 
+      latitude: 34.7642, 
+      longitude: 113.6501 // 郑州（大致位于中国中心）
+    };
+    
+    let attemptHighAccuracy = true;
+    let showedInitialMessage = false;
+    
+    // 设置较长的超时时间
+    const timeout = setTimeout(() => {
+      console.warn('位置获取超时，使用默认或缓存位置');
+      
+      // 如果还没有设置位置，使用默认位置
+      if (!locationReady.value) {
+        // 优先使用缓存位置，其次使用默认位置
+        if (!currentLocation.value || !currentLocation.value.latitude) {
+          currentLocation.value = defaultLocation;
+        }
+        
+        locationReady.value = true;
+        // 显示提示
+        uni.showToast({
+          title: '定位超时，将在获取位置后自动更新',
+          icon: 'none',
+          duration: 3000
+        });
+        
+        resolve(currentLocation.value);
+      }
+    }, 8000);
+    
+    // 显示定位中提示
+    if (!showedInitialMessage) {
+      uni.showLoading({
+        title: '正在定位...',
+        mask: false
+      });
+      showedInitialMessage = true;
+      
+      // 3秒后自动隐藏
+      setTimeout(() => {
+        uni.hideLoading();
+      }, 3000);
+    }
+    
+    // 函数：尝试获取位置
+    const tryGetLocation = (useHighAccuracy = true) => {
+      uni.getLocation({
+        type: 'gcj02',
+        isHighAccuracy: useHighAccuracy, // 高精度定位
+        highAccuracyExpireTime: 4000, // 高精度定位超时时间，单位毫秒
+        success: (res) => {
+          clearTimeout(timeout);
+          console.log('成功获取初始位置:', res);
+          
+          // 隐藏加载提示
+          uni.hideLoading();
+          
+          // 检查定位结果是否有效
+          if (!res.latitude || !res.longitude || 
+              isNaN(res.latitude) || isNaN(res.longitude)) {
+            console.error('获取到无效位置数据:', res);
+            
+            // 如果高精度获取失败，降级到普通精度
+            if (useHighAccuracy) {
+              console.log('高精度定位返回无效数据，降级到普通精度定位');
+              attemptHighAccuracy = false;
+              tryGetLocation(false);
+              return;
+            }
+            
+            // 使用默认位置
+            if (!locationReady.value) {
+              // 优先使用缓存位置，其次使用默认位置
+              if (!currentLocation.value || !currentLocation.value.latitude) {
+                currentLocation.value = defaultLocation;
+              }
+              locationReady.value = true;
+              resolve(currentLocation.value);
+            }
+            return;
+          }
+          
+          // 更新当前位置
+          currentLocation.value = {
+            latitude: res.latitude,
+            longitude: res.longitude
+          };
+          
+          // 保存到缓存，包含时间戳
+          try {
+            const locationWithTimestamp = {
+              ...currentLocation.value,
+              timestamp: Date.now()
+            };
+            uni.setStorageSync('last_known_location', JSON.stringify(locationWithTimestamp));
+          } catch (saveError) {
+            console.warn('保存位置到缓存失败:', saveError);
+          }
+          
+          locationReady.value = true;
+          resolve(currentLocation.value);
+        },
+        fail: (err) => {
+          console.error('获取初始位置失败', err);
+          locationError.value = err;
+          
+          // 如果高精度获取失败，降级到普通精度
+          if (useHighAccuracy) {
+            console.log('高精度定位失败，降级到普通精度定位');
+            attemptHighAccuracy = false;
+            tryGetLocation(false);
+            return;
+          }
+          
+          // 隐藏加载提示
+          uni.hideLoading();
+          
+          // 如果仍没有设置位置，使用默认或缓存位置
+          if (!locationReady.value) {
+            // 优先使用缓存位置，其次使用默认位置
+            if (!currentLocation.value || !currentLocation.value.latitude) {
+              currentLocation.value = defaultLocation;
+              // 显示错误提示
+              uni.showToast({
+                title: '位置获取失败，使用默认位置',
+                icon: 'none',
+                duration: 2000
+              });
+            } else {
+              // 已有缓存位置
+              uni.showToast({
+                title: '使用缓存的位置信息',
+                icon: 'none',
+                duration: 2000
+              });
+            }
+            
+            locationReady.value = true;
+            resolve(currentLocation.value);
+          }
+        }
+      });
+    };
+    
+    // 开始获取位置 - 先尝试高精度
+    try {
+      tryGetLocation(attemptHighAccuracy);
+    } catch (e) {
+      clearTimeout(timeout);
+      console.error('获取位置过程出错:', e);
+      uni.hideLoading();
+      
+      // 使用默认位置
+      if (!locationReady.value) {
+        // 优先使用缓存位置，其次使用默认位置
+        if (!currentLocation.value || !currentLocation.value.latitude) {
+          currentLocation.value = defaultLocation;
+        }
+        locationReady.value = true;
+        resolve(currentLocation.value);
+      }
+    }
+  });
+}
+
+// 修改initMap函数，确保正确设置地图中心点
+const initMap = () => {
+  try {
+    // 检查AMap是否可用
+    if (typeof window.AMap === 'undefined') {
+      console.error('AMap对象仍然未定义，无法初始化地图');
+      uni.showToast({
+        title: '地图加载失败，请刷新页面',
+        icon: 'none',
+        duration: 3000
+      });
+      return;
+    }
+    
+    console.log('准备初始化地图，AMap版本:', window.AMap.version);
+    
+    if (!map.value) {
+      // 确保我们有位置信息
+      if (!locationReady.value) {
+        console.log('位置尚未就绪，获取位置后再初始化地图');
+        getInitialLocation().then(initMapWithLocation);
+        return;
+      }
+      
+      initMapWithLocation(currentLocation.value);
+    } else {
+      console.log('地图已经初始化，不需要重复创建');
+      
+      // 如果地图已初始化，确保将中心设置到当前位置
+      if (currentLocation.value && 
+        typeof currentLocation.value.latitude !== 'undefined') {
+        console.log('更新已有地图到当前位置:', currentLocation.value);
+        map.value.setCenter([
+          currentLocation.value.longitude, 
+          currentLocation.value.latitude
+        ]);
+        map.value.setZoom(16);
+      }
+    }
+  } catch (e) {
+    console.error('创建地图实例失败:', e);
+    // 显示错误提示
+    uni.showToast({
+      title: '地图初始化失败，请重试',
+      icon: 'none',
+      duration: 3000
+    });
+  }
+};
+
+// 添加辅助函数：使用指定位置初始化地图
+function initMapWithLocation(location) {
+  // 显示地图加载动画
+  const mapLoadingStatus = uni.showLoading({
+    title: '地图加载中...',
+    mask: true
+  });
+  
+  // 5秒后自动隐藏加载动画
+  setTimeout(() => uni.hideLoading(), 5000);
+  
+  // 获取当前定位作为地图中心
+  const center = location && 
+    typeof location.longitude !== 'undefined' ? 
+    [location.longitude, location.latitude] : 
+    [113.6501, 34.7642]; // 默认位置（中国中心位置附近）
+  
+  // 初始化地图对象，添加动画效果
+  const mapOptions = {
+    zoom: 15,
+    center: center,
+    resizeEnable: true,
+    animateEnable: true, // 启用动画效果
+    dragEnable: true,    // 允许拖动
+    zoomEnable: true,    // 允许缩放
+    jogEnable: true      // 允许平滑缩放
+  };
+  
+  console.log('地图初始化参数:', mapOptions);
+  
+  // 确保DOM元素存在
+  const mapContainer = document.getElementById('map-container');
+  if (!mapContainer) {
+    console.error('找不到地图容器元素(#map-container)');
+    return;
+  }
+  
+  try {
+    map.value = new window.AMap.Map('map-container', mapOptions);
+    // 保存到全局对象以便在其他函数中访问
+    if (typeof window !== 'undefined') {
+      window.__dogRunMapInstance = map.value;
+    }
+    console.log('高德地图初始化完成');
+  } catch (mapError) {
+    console.error('创建地图实例时发生错误:', mapError);
+    uni.showToast({
+      title: '创建地图失败: ' + mapError.message,
+      icon: 'none',
+      duration: 3000
+    });
+    return;
+  }
+      
+  // 地图加载完成后再创建用户标记
+  map.value.on('complete', () => {
+    console.log('地图加载完成，创建用户标记和加载标记数据');
+    
+    // 隐藏加载动画
+    uni.hideLoading();
+    
+    // 显示成功提示
+    uni.showToast({
+      title: '地图加载完成',
+      icon: 'success',
+      duration: 1000
+    });
+    
+    // 将地图实例存储在DOM元素中
+    if (mapContainer) {
+      mapContainer.__amap_instance__ = map.value;
+    }
+    
+    // 确保设置地图中心到当前位置
+    if (currentLocation.value && 
+      typeof currentLocation.value.latitude !== 'undefined') {
+      console.log('设置地图中心到当前位置:', currentLocation.value);
+      map.value.setCenter([
+        currentLocation.value.longitude, 
+        currentLocation.value.latitude
+      ]);
+      map.value.setZoom(16);
+    }
+    
+    // 简化地图标记创建条件，只需要位置信息
+    setTimeout(() => {
+      if (currentLocation.value && typeof currentLocation.value.latitude !== 'undefined') {
+        console.log('开始创建初始用户标记');
+        // 使用toggleMarker创建用户标记
+        toggleMarker();
+        console.log('初始用户标记已创建');
+        
+        // 加载标记数据并显示在地图上
+        setTimeout(() => {
+          console.log('开始加载地图标记数据');
+          loadMarkers();
+        }, 1000);
+      } else {
+        console.warn('无法创建用户标记：位置不可用');
+        
+        // 重新尝试获取位置
+        getInitialLocation().then(location => {
+          console.log('重新获取位置成功，创建用户标记');
+          toggleMarker();
+          
+          // 加载标记数据
+          loadMarkers();
+        });
+      }
+    }, 1000);
+  });
+
+  // 添加点击事件
+  map.value.on('click', (e) => {
+    console.log('高德地图点击事件:', e);
+    
+    // 模拟标准点击事件格式
+    onMapTap({
+      detail: {
+        x: e.pixel.x,
+        y: e.pixel.y
+      }
+    });
+  });
+      
+  // 设置标记点击处理器
+  setTimeout(setupMarkerClickHandlers, 2000);
+}
+
+// 修改initAMap函数，先获取位置再初始化地图
+const initAMap = async () => {
+  try {
+    console.log('初始化高德地图...');
+    
+    // 先获取初始位置
+    await getInitialLocation();
+    
+    // 检查后端API连接
+    checkBackendConnection();
+    
+    // 加载高德地图SDK
+    window.onAMapLoaded = initMap;
+    
+    // 异步加载高德地图
+    if (typeof AMap === 'undefined') {
+      const script = document.createElement('script');
+      script.type = 'text/javascript';
+      script.async = true;
+      script.src = 'https://webapi.amap.com/maps?v=2.0&key=9ea84b4333b114c188a67cb42564a48f&callback=onAMapLoaded';
+      document.head.appendChild(script);
+    } else {
+      initMap();
+    }
+  } catch (error) {
+    console.error('初始化地图失败:', error);
+    uni.showToast({
+      title: '初始化地图失败',
+      icon: 'none'
+    });
+  }
+};
+
+// 获取用户信息
+const userInfo = computed(() => userStore.userInfo);
+
+// 添加标记显示控制
+const showMarkers = ref(true);
+
+// 控制标记的显示和隐藏
+const toggleMarkersVisibility = () => {
+	showMarkers.value = !showMarkers.value;
+	
+	if (map.value) {
+		// 获取所有圆形覆盖区域和标记，但排除用户头像标记
+		const circles = map.value.getAllOverlays('circle');
+		const allMapMarkers = map.value.getAllOverlays('marker');
+		
+		// 筛选出非用户头像的标记
+		const markerOverlays = allMapMarkers.filter(marker => {
+			// 通过extData或其他属性判断是否是用户头像
+			const extData = marker.getExtData();
+			return !(extData && extData.isUserMarker); // isUserMarker是我们为用户头像标记添加的标识
+		});
+		
+		if (showMarkers.value) {
+			// 显示所有标记（非用户头像）
+			markerOverlays.forEach(marker => {
+				marker.show();
+			});
+			
+			// 显示所有圆形覆盖区域
+			circles.forEach(circle => {
+				circle.show();
+			});
+			
+			console.log('显示所有标记和覆盖区域');
+		} else {
+			// 隐藏所有标记（非用户头像）
+			markerOverlays.forEach(marker => {
+				marker.hide();
+			});
+			
+			// 隐藏所有圆形覆盖区域
+			circles.forEach(circle => {
+				circle.hide();
+			});
+			
+			console.log('隐藏所有标记和覆盖区域，用户头像保持显示');
+		}
+		
+		// 确保用户头像始终显示在最上层
+		ensureUserMarkersOnTop();
+	}
+};
+
+// 确保用户头像标记位于最上层
+const ensureUserMarkersOnTop = () => {
+	if (!map.value) return;
+	
+	const allMarkers = map.value.getAllOverlays('marker');
+	
+	// 筛选出用户头像标记
+	const userMarkers = allMarkers.filter(marker => {
+		const extData = marker.getExtData();
+		return extData && extData.isUserMarker;
+	});
+	
+	// 将用户头像提升到最上层
+	userMarkers.forEach(marker => {
+		marker.setzIndex(1000); // 设置高z-index确保显示在最上层
+		marker.show(); // 确保显示
+	});
+};
+
+// 用户位置标记
+const userMarker = ref(null);
+
+// 添加标记更新事件监听
+onMounted(() => {
+  // 监听标记更新事件
+  uni.$on('markers-updated', (event) => {
+    console.log('接收到标记更新通知:', event);
+    // 如果地图已初始化，重新加载标记
+    if (map.value) {
+      console.log('由于标记更新事件，重新加载地图标记');
+      // 清除地图上现有的标记和圆形覆盖物
+      clearMapOverlays();
+      // 重新加载标记
+      loadMarkers();
+    }
+  });
+});
+
+// 组件卸载前取消事件监听和清理资源
+onBeforeUnmount(() => {
+  console.log('地图页面卸载，清理资源');
+  
+  // 清理定时器和事件监听
+  uni.$off('markers-updated');
+
+  // 清理其他定时器
+  if (locationUpdateInterval.value) {
+    clearInterval(locationUpdateInterval.value);
+    locationUpdateInterval.value = null;
+  }
+  
+  if (nearbyUsersUpdateInterval.value) {
+    clearInterval(nearbyUsersUpdateInterval.value);
+    nearbyUsersUpdateInterval.value = null;
+  }
+  
+  if (walkingTimer.value) {
+    clearInterval(walkingTimer.value);
+    walkingTimer.value = null;
+  }
+  
+  // 清除DOM事件监听器
+  try {
+    // 清除设备方向监听器
+    window.removeEventListener('deviceorientation', null);
+    
+    // 停止设备方向监听
+    if (typeof uni.stopDeviceMotionListening === 'function') {
+      uni.stopDeviceMotionListening({
+        success: () => console.log('设备方向监听已停止'),
+        fail: (err) => console.log('停止设备方向监听出错:', err)
+      });
+    }
+    
+    // 取消罗盘监听
+    if (typeof uni.offCompassChange === 'function') {
+      uni.offCompassChange();
+    }
+    
+    // 清除自定义事件监听器
+    const mapDom = document.getElementById('map-container');
+    if (mapDom) {
+      mapDom.removeEventListener('click', onMapContainerClick);
+    }
+  } catch (e) {
+    console.warn('停止传感器监听时出错:', e);
+  }
+  
+  // 清除标记引用和缓存
+  Object.keys(userMarkers).forEach(key => {
+    delete userMarkers[key];
+  });
+  
+  // 清除头像缓存
+  if (avatarCache && typeof avatarCache.clear === 'function') {
+    avatarCache.clear();
+  }
+  
+  // 通知定位存储退出地图页面
+  if (locationStore) {
+    try {
+      // 如果有stopLocationUpdates方法，调用它
+      if (typeof locationStore.stopLocationUpdates === 'function') {
+        locationStore.stopLocationUpdates();
+      }
+    } catch (storeError) {
+      console.warn('停止位置更新存储时出错:', storeError);
+    }
+  }
+  
+  // 清理地图资源
+  if (map.value) {
+    try {
+      // 移除地图上的所有覆盖物
+      map.value.clearMap();
+      // 销毁地图实例
+      map.value.destroy();
+      map.value = null;
+      console.log('地图实例已销毁');
+    } catch (e) {
+      console.error('销毁地图时出错:', e);
+    }
+  }
+});
+
+// 添加清除地图覆盖物的方法
+function clearMapOverlays() {
+  if (!map.value) return;
+  
+  try {
+    console.log('清除地图上的所有标记和覆盖物');
+    
+    // 获取所有标记和圆形覆盖物
+    const allMarkers = map.value.getAllOverlays('marker');
+    const allCircles = map.value.getAllOverlays('circle');
+    
+    // 保存用户位置标记，以便后续还原
+    const userMarkers = allMarkers.filter(marker => {
+      const extData = marker.getExtData();
+      return extData && extData.isUserMarker;
+    });
+    
+    // 移除非用户标记
+    const normalMarkers = allMarkers.filter(marker => {
+      const extData = marker.getExtData();
+      return !(extData && extData.isUserMarker);
+    });
+    
+    // 移除标记
+    if (normalMarkers.length > 0) {
+      map.value.remove(normalMarkers);
+      console.log(`已移除 ${normalMarkers.length} 个普通标记`);
+    }
+    
+    // 移除圆形覆盖物
+    if (allCircles.length > 0) {
+      map.value.remove(allCircles);
+      console.log(`已移除 ${allCircles.length} 个圆形覆盖物`);
+    }
+    
+    // 确保用户标记仍在最顶层
+    userMarkers.forEach(marker => {
+      marker.setzIndex(1000);
+    });
+  } catch (error) {
+    console.error('清除地图覆盖物时出错:', error);
+  }
+}
+
+// 处理从marker-detail页面返回后的导航
+const checkNavigationRequest = () => {
+	const navigateToMarker = uni.getStorageSync('navigate_to_marker');
+	if (navigateToMarker) {
+		// 清除缓存
+		uni.removeStorageSync('navigate_to_marker');
+		
+		// 获取位置信息
+		const longitude = navigateToMarker.longitude || navigateToMarker.location?.coordinates?.[0];
+		const latitude = navigateToMarker.latitude || navigateToMarker.location?.coordinates?.[1];
+		
+		// 导航到位置
+		if (longitude && latitude && map.value) {
+			map.value.setCenter([longitude, latitude]);
+			map.value.setZoom(17);
+			
+			// 显示提示
+			uni.showToast({
+				title: '正在导航到标记位置',
+				icon: 'none',
+				duration: 1500
+			});
+		}
+	}
+};
+
+// 导航到指定位置（供其他页面调用）
+const navigateToLocation = (markerData) => {
+	if (!markerData) return;
+	
+	const longitude = markerData.longitude || markerData.location?.coordinates?.[0];
+	const latitude = markerData.latitude || markerData.location?.coordinates?.[1];
+	
+	if (longitude && latitude && map.value) {
+		map.value.setCenter([longitude, latitude]);
+		map.value.setZoom(17);
+		
+		// 显示提示
+		uni.showToast({
+			title: '正在导航到标记位置',
+			icon: 'none',
+			duration: 1500
+		});
+	}
+};
+
+// 在页面恢复时检查是否有导航请求
+uni.onShow(() => {
+	checkNavigationRequest();
+});
+
+// 直接使用处理好的图像创建标记
+function createMarkerWithProcessedImage(userId, position, imageDataUrl) {
+	try {
+		// 画布大小
+		const canvasSize = 60;
+		
+		// 确保userMarkers对象已初始化
+		if (typeof userMarkers !== 'object') {
+			console.warn('userMarkers未定义，初始化为空对象');
+			window.userMarkers = {};
+		}
+		
+		// 移除可能存在的同ID标记
+		if (userMarkers[userId]) {
+			console.log('移除已存在的同ID标记:', userId);
+			map.value.remove(userMarkers[userId]);
+			delete userMarkers[userId];
+		}
+		
+		// 创建标记
+		const marker = new AMap.Marker({
+			position: position,
+			icon: new AMap.Icon({
+				size: new AMap.Size(canvasSize, canvasSize),
+				image: imageDataUrl,
+				imageSize: new AMap.Size(canvasSize, canvasSize)
+			}),
+			offset: new AMap.Pixel(-canvasSize/2, -canvasSize/2),
+			zIndex: 100, // 高z-index确保显示在最上层
+			extData: { 
+				userId: userId, 
+				type: 'user',
+				isUserMarker: true // 添加标识，表明这是用户头像标记
+			}
+		});
+		
+		// 将标记添加到地图
+		map.value.add(marker);
+		
+		// 保存标记引用以便后续操作
+		userMarkers[userId] = marker;
+		
+		// 设置DOM属性和事件处理
+		setTimeout(() => setupMarkerDOM(marker, userId), 100);
+		
+		// 为标记添加点击事件
+		marker.on('click', function(e) {
+			console.log('标记被点击，用户ID:', userId);
+			processUserMarkerTap(userId);
+		});
+		
+		// 确保元素已添加后设置触发器
+		setTimeout(() => setupMarkerClickHandlers(), 500);
+		
+		console.log('成功创建用户标记，用户ID:', userId);
+		return marker;
+	} catch (error) {
+		console.error('使用处理好的图像创建标记失败:', error);
+		return createDefaultMarker(position, userId);
+	}
+}
+
+// 处理图像并创建标记
+function processImageAndCreateMarker(userId, position, imageUrl) {
+	try {
+		// 画布大小和图像大小
+		const canvasSize = 60;
+		const imageSize = 56; // 略微增大图像尺寸，减少白边
+		
+		// 创建画布
+		const canvas = document.createElement('canvas');
+		canvas.width = canvasSize;
+		canvas.height = canvasSize;
+		// 添加willReadFrequently属性以优化性能
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		
+		if (!ctx) {
+			console.error('无法获取canvas上下文');
+			return createDefaultMarker(position, userId);
+		}
+		
+		// 清空画布
+		ctx.clearRect(0, 0, canvasSize, canvasSize);
+		
+		// 创建图像对象
+		const img = new Image();
+		img.crossOrigin = 'Anonymous'; // 尝试处理跨域问题
+		
+		// 图像加载完成后绘制
+		img.onload = function() {
+			try {
+				// 创建圆形裁剪区域
+				ctx.save();
+				ctx.beginPath();
+				ctx.arc(canvasSize/2, canvasSize/2, imageSize/2, 0, Math.PI * 2);
+				ctx.closePath();
+				ctx.clip();
+				
+				// 计算绘制坐标以居中显示图像
+				const x = (canvasSize - imageSize) / 2;
+				const y = (canvasSize - imageSize) / 2;
+				
+				// 在圆形裁剪区域内绘制图像
+				ctx.drawImage(img, x, y, imageSize, imageSize);
+				
+				// 恢复上下文
+				ctx.restore();
+				
+				// 画蓝色边框
+				ctx.beginPath();
+				ctx.arc(canvasSize/2, canvasSize/2, imageSize/2, 0, Math.PI * 2);
+				ctx.lineWidth = 2;
+				ctx.strokeStyle = '#2196F3'; // 蓝色边框
+				ctx.stroke();
+				
+				// 将画布转换为base64图像
+				const markerImage = canvas.toDataURL('image/png');
+				
+				// 保存到缓存
+				avatarCache.put(imageUrl, markerImage);
+				
+				// 创建标记
+				createMarkerWithProcessedImage(userId, position, markerImage);
+			} catch (error) {
+				console.error('处理图像时出错:', error);
+				createDefaultMarker(position, userId);
+			}
+		};
+		
+		// 图像加载失败时创建默认标记
+		img.onerror = function(e) {
+			console.error('加载头像图像失败:', e);
+			createDefaultMarker(position, userId);
+		};
+		
+		// 设置图像源
+		img.src = imageUrl;
+	} catch (error) {
+		console.error('处理图像并创建标记失败:', error);
+		return createDefaultMarker(position, userId);
+	}
+}
+
+// 辅助函数：设置标记DOM属性和事件
+function setupMarkerDOM(marker, userId) {
+	try {
+		const dom = marker.getContentDom();
+		if (dom) {
+			console.log(`为标记DOM设置用户ID: ${userId}`);
+			
+			// 设置数据属性用于事件处理 - 确保设置正确的ID
+			dom.setAttribute('data-user-id', userId);
+			dom.setAttribute('data-id', `user-marker-${userId}`);
+			dom.id = `marker-${userId}`;
+			dom.classList.add('user-marker');
+			dom.classList.add(`user-marker-${userId}`);
+			
+			// 设置自定义属性，方便调试
+			dom.setAttribute('data-marker-type', 'user');
+			dom.setAttribute('data-timestamp', new Date().getTime());
+			
+			// 添加点击事件
+			dom.addEventListener('click', (e) => {
+				e.stopPropagation();
+				console.log('用户标记DOM点击, 用户ID:', userId);
+				processUserMarkerTap(userId);
+			});
+			
+			// 确保可点击性
+			dom.style.cursor = 'pointer';
+			dom.style.pointerEvents = 'auto';
+			
+			// 确保图像元素也有正确的ID
+			const imgElem = dom.querySelector('img');
+			if (imgElem) {
+				imgElem.setAttribute('data-user-id', userId);
+				imgElem.setAttribute('data-id', `user-image-${userId}`);
+			}
+		} else {
+			console.warn('无法获取标记DOM元素');
+		}
+	} catch (e) {
+		console.error('设置标记DOM属性时出错:', e);
+	}
+}
+
+// 添加地图开始拖动事件处理

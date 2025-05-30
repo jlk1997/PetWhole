@@ -1,0 +1,18 @@
+{
+    "version" : "0.0",
+    "configurations" : [
+        {
+            "browser" : "chrome",
+            "name" : "Launch in Chrome",
+            "port" : 5173,
+            "request" : "launch",
+            "runtimeArgs" : [ "run", "dev:h5" ],
+            "runtimeExecutable" : "npm",
+            "type" : "uni-app"
+        },
+        {
+            "playground" : "custom",
+            "type" : "uni-app:app-android"
+        }
+    ]
+}

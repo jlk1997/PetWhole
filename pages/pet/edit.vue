@@ -56,8 +56,89 @@
 			</view>
 			
 			<view class="form-item">
-				<text class="form-label">备注</text>
-				<textarea class="form-textarea" v-model="form.notes" placeholder="添加备注信息（选填）" />
+				<text class="form-label">社交意向</text>
+				<view class="selector-row">
+					<view 
+						class="selector-option" 
+						:class="{ active: form.socialIntention === 'strong' }"
+						@click="form.socialIntention = 'strong'"
+					>
+						<text>强烈</text>
+					</view>
+					<view 
+						class="selector-option" 
+						:class="{ active: form.socialIntention === 'medium' }"
+						@click="form.socialIntention = 'medium'"
+					>
+						<text>较强</text>
+					</view>
+					<view 
+						class="selector-option" 
+						:class="{ active: form.socialIntention === 'mild' }"
+						@click="form.socialIntention = 'mild'"
+					>
+						<text>平淡</text>
+					</view>
+				</view>
+			</view>
+			
+			<view class="form-item">
+				<text class="form-label">求偶状态</text>
+				<view class="selector-row">
+					<view 
+						class="selector-option" 
+						:class="{ active: form.matingStatus === 'single' }"
+						@click="form.matingStatus = 'single'"
+					>
+						<text>单身待求偶</text>
+					</view>
+					<view 
+						class="selector-option" 
+						:class="{ active: form.matingStatus === 'paired' }"
+						@click="form.matingStatus = 'paired'"
+					>
+						<text>有配偶</text>
+					</view>
+					<view 
+						class="selector-option" 
+						:class="{ active: form.matingStatus === 'notLooking' }"
+						@click="form.matingStatus = 'notLooking'"
+					>
+						<text>暂不找配偶</text>
+					</view>
+				</view>
+			</view>
+			
+			<view class="form-item">
+				<text class="form-label">日常照片 (最多3张)</text>
+				<view class="daily-photos">
+					<view 
+						v-for="(photo, index) in form.dailyPhotos" 
+						:key="index" 
+						class="photo-item"
+					>
+						<image 
+							class="photo-preview" 
+							:src="photo.url" 
+							mode="aspectFill"
+							@error="handlePhotoError"
+						></image>
+						<view class="photo-delete" @click="removePhoto(index)">×</view>
+					</view>
+					
+					<view 
+						v-if="form.dailyPhotos.length < 3" 
+						class="photo-add"
+						@click="addDailyPhoto"
+					>
+						<text class="add-icon">+</text>
+					</view>
+				</view>
+			</view>
+			
+			<view class="form-item">
+				<text class="form-label">个性介绍</text>
+				<textarea class="form-textarea" v-model="form.description" placeholder="添加个性信息（选填）" />
 			</view>
 			
 			<button 
@@ -108,8 +189,11 @@ const form = ref({
   gender: 'male',
   age: '',
   weight: '',
-  notes: '',
-  avatar: ''
+  description: '',
+  avatar: '',
+  socialIntention: 'medium',
+  matingStatus: 'notLooking',
+  dailyPhotos: []
 });
 
 // 当前编辑的宠物ID
@@ -164,8 +248,11 @@ onMounted(async () => {
       gender: 'male',
       age: '',
       weight: '',
-      notes: '',
-      avatar: '/static/images/default-pet.png'
+      description: '',
+      avatar: '/static/images/default-pet.png',
+      socialIntention: 'medium',
+      matingStatus: 'notLooking',
+      dailyPhotos: []
     };
   }
 });
@@ -189,8 +276,14 @@ async function loadPetData(petId) {
         gender: pet.gender || 'male',
         age: pet.age || '',
         weight: pet.weight || '',
-        notes: pet.notes || '',
-        avatar: formatImageUrl(pet.avatar) || '/static/images/default-pet.png'
+        description: pet.description || '',
+        avatar: formatImageUrl(pet.avatar) || '/static/images/default-pet.png',
+        socialIntention: pet.socialIntention || 'medium',
+        matingStatus: pet.matingStatus || 'notLooking',
+        dailyPhotos: Array.isArray(pet.dailyPhotos) ? pet.dailyPhotos.map(photo => ({
+          ...photo,
+          url: formatImageUrl(photo.url)
+        })) : []
       };
     } else {
       console.error('未找到宠物:', petId);
@@ -281,6 +374,77 @@ function chooseAvatar() {
   });
 }
 
+// 添加日常照片
+function addDailyPhoto() {
+  if (form.value.dailyPhotos.length >= 3) {
+    showToast({
+      title: '最多只能上传3张照片',
+      icon: 'none'
+    });
+    return;
+  }
+  
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    success: (res) => {
+      // 显示加载状态
+      uni.showLoading({
+        title: '处理图片中...'
+      });
+      
+      try {
+        // 添加到照片数组
+        const newPhoto = {
+          url: res.tempFilePaths[0],  // 本地临时路径
+          uploadDate: new Date(),
+          description: ''
+        };
+        
+        form.value.dailyPhotos.push(newPhoto);
+        
+        // 如果已经在编辑模式并且有ID，可以考虑直接上传
+        // 这里简化处理，统一在保存时上传
+        
+        uni.hideLoading();
+        showToast({
+          title: '已添加照片',
+          icon: 'success'
+        });
+        
+        // 在控制台打印添加的照片信息，用于调试
+        console.log('已添加临时照片:', newPhoto);
+      } catch (error) {
+        console.error('添加照片失败:', error);
+        uni.hideLoading();
+        showToast({
+          title: '添加照片失败',
+          icon: 'none'
+        });
+      }
+    }
+  });
+}
+
+// 删除照片
+function removePhoto(index) {
+  if (index >= 0 && index < form.value.dailyPhotos.length) {
+    form.value.dailyPhotos.splice(index, 1);
+    showToast({
+      title: '已删除照片',
+      icon: 'success'
+    });
+  }
+}
+
+// 处理照片加载错误
+function handlePhotoError(e) {
+  console.error('照片加载失败:', e.target);
+  // 可以在这里设置一个默认图片
+  e.target.src = '/static/images/default-pet.png';
+}
+
 // 提交表单
 async function handleSubmit() {
   if (!isFormValid.value) {
@@ -298,12 +462,30 @@ async function handleSubmit() {
       gender: form.value.gender,
       age: form.value.age ? parseInt(form.value.age) : null,
       weight: form.value.weight ? parseFloat(form.value.weight) : null,
-      notes: form.value.notes
+      description: form.value.description,
+      socialIntention: form.value.socialIntention,
+      matingStatus: form.value.matingStatus
     };
 
     // 保存临时头像路径，不直接发送Blob URL
     const tempAvatarPath = form.value.avatar;
     let isBlobUrl = tempAvatarPath && tempAvatarPath.startsWith('blob:');
+    
+    // 处理日常照片的上传
+    let dailyPhotosToUpload = [];
+    
+    if (form.value.dailyPhotos && form.value.dailyPhotos.length > 0) {
+      dailyPhotosToUpload = form.value.dailyPhotos.filter(photo => 
+        photo.url && (photo.url.startsWith('blob:') || photo.url.startsWith('file:'))
+      );
+      
+      // 过滤掉本地路径，只保留已上传到服务器的照片
+      const serverPhotos = form.value.dailyPhotos.filter(photo => 
+        photo.url && !photo.url.startsWith('blob:') && !photo.url.startsWith('file:')
+      );
+      
+      petData.dailyPhotos = serverPhotos;
+    }
     
     let result;
     
@@ -322,34 +504,72 @@ async function handleSubmit() {
         }
       }
       
+      // 处理新增的日常照片上传
+      if (dailyPhotosToUpload.length > 0) {
+        try {
+          for (const photo of dailyPhotosToUpload) {
+            const uploadResult = await petStore.uploadPetDailyPhoto(currentPetId.value, photo.url);
+            console.log('日常照片上传结果:', uploadResult);
+            
+            // 更新照片URL为服务器返回的URL（如果有）
+            if (uploadResult && uploadResult.data && uploadResult.data.photo && uploadResult.data.photo.url) {
+              console.log('服务器返回的照片URL:', uploadResult.data.photo.url);
+            }
+          }
+        } catch (photoError) {
+          console.error('日常照片上传失败:', photoError);
+        }
+      }
+      
       showToast({
         title: '宠物信息已更新',
         icon: 'success'
       });
     } else {
+      // 新增宠物
       console.log('添加新宠物:', petData);
-      // 先添加宠物信息，不包含头像
       result = await petStore.addPet(petData);
       
-      // 如果添加成功且有头像，上传头像
-      if (result && result._id && isBlobUrl) {
-        console.log('添加模式: 单独上传头像到新创建的宠物', result._id, tempAvatarPath);
-        try {
-          await petStore.uploadPetAvatar(result._id, tempAvatarPath);
-        } catch (avatarError) {
-          console.error('新宠物头像上传失败:', avatarError);
+      if (result && result._id) {
+        const newPetId = result._id;
+        
+        // 上传头像
+        if (isBlobUrl) {
+          console.log('添加模式: 上传头像', tempAvatarPath);
+          try {
+            await petStore.uploadPetAvatar(newPetId, tempAvatarPath);
+          } catch (avatarError) {
+            console.error('头像上传失败:', avatarError);
+          }
         }
+        
+        // 处理日常照片上传
+        if (dailyPhotosToUpload.length > 0) {
+          try {
+            for (const photo of dailyPhotosToUpload) {
+              const uploadResult = await petStore.uploadPetDailyPhoto(newPetId, photo.url);
+              console.log('新增模式 - 日常照片上传结果:', uploadResult);
+              
+              // 更新照片URL为服务器返回的URL（如果有）
+              if (uploadResult && uploadResult.data && uploadResult.data.photo && uploadResult.data.photo.url) {
+                console.log('服务器返回的照片URL:', uploadResult.data.photo.url);
+              }
+            }
+          } catch (photoError) {
+            console.error('日常照片上传失败:', photoError);
+          }
+        }
+        
+        showToast({
+          title: '宠物添加成功',
+          icon: 'success'
+        });
+      } else {
+        throw new Error('添加宠物失败，未返回宠物ID');
       }
-      
-      showToast({
-        title: '宠物添加成功',
-        icon: 'success'
-      });
     }
     
-    console.log('保存宠物结果:', result);
-    
-    // 刷新宠物列表数据
+    // 通知store刷新宠物列表
     await petStore.fetchPets();
     
     // 返回上一页
@@ -359,7 +579,7 @@ async function handleSubmit() {
   } catch (error) {
     console.error('保存宠物信息失败:', error);
     showToast({
-      title: error.message || '保存失败，请重试',
+      title: '保存失败: ' + (error.message || '未知错误'),
       icon: 'none'
     });
   } finally {
@@ -424,13 +644,13 @@ function formatImageUrl(url) {
   
   // 如果是相对路径，补充基础URL
   if (url.startsWith('/uploads')) {
-    const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+    const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
     return BASE_URL + url;
   }
   
   // 如果是uploads路径但没有前导斜杠
   if (url.startsWith('uploads/')) {
-    const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://localhost:5000';
+    const BASE_URL = uni.getStorageSync('BASE_URL') || 'http://49.235.65.37:5000';
     return BASE_URL + '/' + url;
   }
   
@@ -441,14 +661,13 @@ function formatImageUrl(url) {
 
 <style>
 .pet-edit-container {
-  padding: 40rpx;
-  background-color: #f9f9f9;
+  padding: 30rpx;
+  background-color: #f8f8f8;
   min-height: 100vh;
 }
 
 .form-header {
-  text-align: center;
-  margin-bottom: 40rpx;
+  margin-bottom: 30rpx;
 }
 
 .form-title {
@@ -516,7 +735,7 @@ function formatImageUrl(url) {
   background-color: #fff;
 }
 
-.gender-selector {
+.gender-selector, .selector-row {
   display: flex;
   width: 100%;
   border: 1rpx solid #ddd;
@@ -524,7 +743,7 @@ function formatImageUrl(url) {
   overflow: hidden;
 }
 
-.gender-option {
+.gender-option, .selector-option {
   flex: 1;
   height: 80rpx;
   display: flex;
@@ -533,9 +752,63 @@ function formatImageUrl(url) {
   background-color: #f9f9f9;
 }
 
-.gender-option.active {
+.gender-option.active, .selector-option.active {
   background-color: #3B9E82;
   color: #fff;
+}
+
+/* 照片上传区域样式 */
+.daily-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20rpx;
+  margin-top: 10rpx;
+}
+
+.photo-item, .photo-add {
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 8rpx;
+  position: relative;
+}
+
+.photo-item {
+  border: 1rpx solid #ddd;
+  overflow: hidden;
+}
+
+.photo-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-delete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 40rpx;
+  height: 40rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 24rpx;
+  border-bottom-left-radius: 8rpx;
+}
+
+.photo-add {
+  border: 1rpx dashed #ddd;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f9f9f9;
+}
+
+.add-icon {
+  font-size: 60rpx;
+  color: #999;
 }
 
 .submit-btn {

@@ -2,14 +2,24 @@
 import { useUserStore } from './store/user'
 import { usePetStore } from './store/pet'
 import api from './utils/api'
+import IconLoader from './components/IconLoader.vue'
+import config from './config/index.js'
 
 export default {
+	components: {
+		IconLoader
+	},
 	onLaunch: function() {
 		console.log('App Launch')
 		
 		// 初始化全局store
 		const userStore = useUserStore()
 		const petStore = usePetStore()
+		
+		// 设置BASE_URL到本地存储
+		const apiUrl = config.BASE_API_URL || 'http://49.235.65.37:5000'
+		console.log('初始化BASE_URL:', apiUrl)
+		uni.setStorageSync('BASE_URL', apiUrl)
 		
 		// 初始化并检查API
 		this.initApi();
@@ -148,6 +158,14 @@ export default {
 					this.initApi();
 				}, 5000);
 			}
+		},
+		// 处理图标更新事件
+		handleIconUpdated(count) {
+			console.log(`应用图标更新完成，更新了 ${count} 个图标`);
+			uni.showToast({
+				title: `更新了 ${count} 个图标`,
+				icon: 'success'
+			});
 		}
 	},
 	globalData: {
@@ -156,10 +174,17 @@ export default {
 }
 </script>
 
+<template>
+	<div class="app-container">
+		<router-view></router-view>
+		<IconLoader @update-applied="handleIconUpdated" />
+	</div>
+</template>
+
 <style>
 	/*每个页面公共css */
 	@import './common/uni.css';
 	/* 引入自定义图标库 */
 	@import './common/iconfont.css';
-	@import 'animate.css'
+	/* @import 'animate.css' */
 </style>

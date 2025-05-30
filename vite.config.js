@@ -1,35 +1,60 @@
 import { defineConfig } from 'vite'
 import uni from '@dcloudio/vite-plugin-uni'
 import { resolve } from 'path'
+import disableSSRPlugin from './plugins/disable-ssr'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [uni()],
+  plugins: [
+    disableSSRPlugin(),
+    uni()
+  ],
+  build: {
+    target: 'es2015',
+    minify: 'terser',
+    sourcemap: false
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, '.'),
       'src': resolve(__dirname, 'src')
-    },
-    extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue']
+    }
   },
   server: {
     port: 5173,
     host: true,
-    // 启用代理配置，将/api请求转发到后端
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'http://49.235.65.37:5000',
+        changeOrigin: true
+      },
+      '/vetmew-api': {
+        target: 'https://platformx.vetmew.com',
         changeOrigin: true,
-        secure: false
+        rewrite: (path) => path.replace(/^\/vetmew-api/, ''),
+        secure: false,
+        configure: (proxy, options) => {
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            console.log('代理请求:', req.method, req.url);
+          });
+          
+          proxy.on('proxyRes', (proxyRes, req, res) => {
+            console.log('代理响应:', proxyRes.statusCode, req.url);
+            console.log('响应头:', proxyRes.headers);
+            
+            if (proxyRes.headers['content-type']) {
+              console.log('内容类型:', proxyRes.headers['content-type']);
+            }
+          });
+          
+          proxy.on('error', (err, req, res) => {
+            console.error('代理错误:', err);
+          });
+        }
       }
     }
   },
-  build: {
-    target: 'es2015',
-    cssTarget: 'chrome80',
-    minify: 'terser'
-  },
   optimizeDeps: {
-    exclude: ['@dcloudio/uni-app']
+    exclude: ['@dcloudio/uni-app', '@dcloudio/uni-ui']
   }
 }) 

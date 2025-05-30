@@ -1,1 +1,0 @@
-{"version":3,"file":"index.js","sources":["C:/Users/10552/Downloads/HBuilderX.4.56.2025031210/HBuilderX/plugins/uniapp-cli-vite/uniPage:/cGFnZXMvaW5kZXgvaW5kZXgudnVl"],"sourcesContent":["import MiniProgramPage from 'D:/caloriesH5/CloudStorage/pages/index/index.vue'\nwx.createPage(MiniProgramPage)"],"names":[],"mappings":";;;;;;;;;;;;;;AACA,GAAG,WAAW,eAAe;"}

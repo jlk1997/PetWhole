@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width, viewport-fit=cover">
+    <title>地图</title>
+    <style>
+        html, body, #map_container { height: 100%; width: 100%; margin: 0; padding: 0; }
+        /* 尝试隐藏高德Logo和版权，请确保此操作符合高德地图的使用条款和当地法规 */
+        .amap-logo { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+        .amap-copyright { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+    </style>
+    <!-- 使用您提供的API Key -->
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=9ea84b4333b114c188a67cb42564a48f&plugin=AMap.ToolBar,AMap.Scale,AMap.Geolocation,AMap.MarkerClusterer,AMap.PolyEditor,AMap.CircleEditor"></script>
+    <!-- uni-app的JSSDK，用于postMessage -->
+    <script type="text/javascript" src="https://js.cdn.aliyun.dcloud.net.cn/dev/uni-app/uni.webview.1.5.2.js"></script>
+</head>
+<body>
+    <div id="map_container"></div>
+    <script>
+        var aMapInstance; // 高德地图实例
+        var userLocationMarker; // 用户当前位置的标记
+        var markerClusterer; // 点聚合实例
+        var activePolyEditor; // 当前激活的路径编辑器
+        var activeCircleEditor; // 当前激活的圆形编辑器
+        var allOverlays = { // 用于管理所有添加到地图上的覆盖物，方便查找和清除
+            markers: {}, // id: AMap.Marker
+            polylines: {}, // id: AMap.Polyline
+            circles: {} // id: AMap.Circle
+        };
+
+        // --- 供 uni-app 调用的全局函数 ---
+
+        /**
+         * 初始化地图
+         * @param {object} options - { center: [lng, lat], zoom: number }
+         */
+        window.initMap = function(options) {
+            options = options || {};
+            try {
+                aMapInstance = new AMap.Map('map_container', {
+                    zoom: options.zoom || 14,
+                    center: options.center || [116.397428, 39.90923], // 默认北京
+                    resizeEnable: true,
+                    // viewMode: '2D', // 根据需要设置
+                    // labelzIndex: 130, // 避免自定义标记物label被遮挡
+                });
+
+                // 初始化点聚合
+                // 注意：如果标记物有自定义内容且复杂，点聚合效果可能需要精细调整
+                markerClusterer = new AMap.MarkerClusterer(aMapInstance, [], {
+                    gridSize: 60,
+                    minClusterSize: 2,
+                    // renderClusteredMarker: function(cluster) { ... } // 自定义聚合点样式
+                    // renderMarker: function(context){ ... } // 自定义非聚合点样式，如果需要
+                });
+                
+                aMapInstance.on('complete', function(){
+                     sendMessageToUniapp({ type: 'mapLoaded' });
+                     console.log('HTML Map AMap.Map Event: complete');
+                });
+
+                aMapInstance.on('click', function(e) {
+                    sendMessageToUniapp({
+                        type: 'mapClick',
+                        longitude: e.lnglat.getLng(),
+                        latitude: e.lnglat.getLat()
+                    });
+                });
+
+                aMapInstance.on('zoomchange', function(){
+                    sendMessageToUniapp({ type: 'zoomChange', zoom: aMapInstance.getZoom() });
+                });
+
+                aMapInstance.on('dragend', function(){
+                     sendMessageToUniapp({ 
+                        type: 'dragEnd', 
+                        center: [aMapInstance.getCenter().getLng(), aMapInstance.getCenter().getLat()]
+                     });
+                });
+
+                console.log('HTML Map Initialized with options:', options);
+                sendMessageToUniapp({ type: 'mapInitComplete', success: true, options: options });
+            } catch (e) {
+                console.error('Error initializing map in HTML:', e);
+                sendMessageToUniapp({ type: 'mapInitComplete', success: false, error: e.toString() });
+            }
+        };
+
+        /**
+         * 更新或创建用户当前位置标记
+         * @param {object} data - {lng, lat, iconUrl, id (optional), centerTo (boolean)}
+         */
+        window.updateUserLocationMarker = function(data) {
+            if (!aMapInstance) return console.warn('AMap instance not ready for updateUserLocationMarker');
+            try {
+                const position = new AMap.LngLat(data.lng, data.lat);
+                if (userLocationMarker) {
+                    userLocationMarker.setPosition(position);
+                    if (data.iconUrl && userLocationMarker.getIcon() !== data.iconUrl) {
+                        userLocationMarker.setIcon(new AMap.Icon({
+                            size: new AMap.Size(40, 40), // 图标尺寸
+                            image: data.iconUrl,
+                            imageSize: new AMap.Size(40, 40)
+                        }));
+                    }
+                } else {
+                    let iconConfig = {
+                        size: new AMap.Size(40, 40),
+                        imageSize: new AMap.Size(40, 40)
+                    };
+                    if (data.iconUrl) {
+                        iconConfig.image = data.iconUrl;
+                    } else {
+                        // 默认图标或不设置图标，使用高德默认
+                    }
+                    userLocationMarker = new AMap.Marker({
+                        position: position,
+                        icon: new AMap.Icon(iconConfig),
+                        offset: new AMap.Pixel(-20, -40), // 根据icon中心点调整
+                        extData: { id: data.id || 'userLocationMarker', type: 'user_location' }
+                    });
+                    aMapInstance.add(userLocationMarker);
+                    userLocationMarker.on('click', function(e) {
+                        sendMessageToUniapp({ type: 'markerClick', data: e.target.getExtData() });
+                    });
+                }
+                if (data.centerTo) {
+                    aMapInstance.setCenter(position);
+                }
+            } catch(e) {
+                console.error('Error updateUserLocationMarker:', e, 'Data:', data);
+            }
+        };
+
+        /**
+         * 设置地图中心点和缩放级别
+         * @param {number} lng
+         * @param {number} lat
+         * @param {number} zoom (optional)
+         */
+        window.setMapCenterAndZoom = function(lng, lat, zoom) {
+            if (!aMapInstance) return console.warn('AMap instance not ready for setMapCenterAndZoom');
+            aMapInstance.setCenter([lng, lat]);
+            if (typeof zoom === 'number') {
+                aMapInstance.setZoom(zoom);
+            }
+        };
+        
+        /**
+         * 地图放大一级
+         */
+        window.zoomInMap = function() {
+            if (!aMapInstance) return;
+            aMapInstance.zoomIn();
+        };
+
+        /**
+         * 地图缩小一级
+         */
+        window.zoomOutMap = function() {
+            if (!aMapInstance) return;
+            aMapInstance.zoomOut();
+        };
+        
+        /**
+         * 添加或更新一组标记到点聚合器或地图上
+         * @param {array} markersDataArray - [{id, lng, lat, iconUrl, title, content (for label/infowindow), ...extData}]
+         * @param {boolean} useCluster - 是否使用点聚合，默认为true
+         */
+        window.addOrUpdateMarkers = function(markersDataArray, useCluster = true) {
+            if (!aMapInstance) return console.warn('AMap instance not ready for addOrUpdateMarkers');
+            
+            let markersToAdd = [];
+            markersDataArray.forEach(function(data) {
+                const markerId = String(data.id); // 确保ID是字符串
+                if (!markerId) {
+                    console.warn('Marker data missing ID:', data);
+                    return;
+                }
+
+                // 检查是否是用户自身位置标记，如果是，则不应由此函数处理
+                if (userLocationMarker && userLocationMarker.getExtData().id === markerId) {
+                    console.log('Skipping user location marker in addOrUpdateMarkers:', markerId);
+                    return;
+                }
+                
+                let existingMarker = allOverlays.markers[markerId];
+
+                const position = new AMap.LngLat(data.lng, data.lat);
+                let iconConfig = {
+                    size: new AMap.Size(36, 36), // 默认图标尺寸
+                    imageSize: new AMap.Size(36, 36)
+                };
+                if (data.iconUrl) {
+                    iconConfig.image = data.iconUrl;
+                } else {
+                    // 可以设置一个默认的非用户标记图标
+                    // iconConfig.image = 'URL_TO_DEFAULT_MARKER_ICON';
+                }
+
+                if (existingMarker) { // 更新现有标记
+                    existingMarker.setPosition(position);
+                    if (data.iconUrl && existingMarker.getIcon().image !== data.iconUrl) {
+                        existingMarker.setIcon(new AMap.Icon(iconConfig));
+                    }
+                    existingMarker.setExtData(data); // 更新附加数据
+                    // 如果label内容变化，也需要更新
+                    if (data.content && existingMarker.getLabel() && existingMarker.getLabel().content !== data.content) {
+                        existingMarker.setLabel({ content: data.content, offset: new AMap.Pixel(0, 40) });
+                    }
+                } else { // 创建新标记
+                    let newMarker = new AMap.Marker({
+                        position: position,
+                        icon: new AMap.Icon(iconConfig),
+                        offset: new AMap.Pixel(-18, -36), // 根据icon中心点调整
+                        title: data.title,
+                        label: data.content ? { content: data.content, offset: new AMap.Pixel(0, 40) } : undefined, // 标记点文字标签
+                        extData: data
+                    });
+                    newMarker.on('click', function(e) {
+                        sendMessageToUniapp({ type: 'markerClick', data: e.target.getExtData() });
+                    });
+                    allOverlays.markers[markerId] = newMarker;
+                    markersToAdd.push(newMarker);
+                }
+            });
+
+            if (useCluster && markerClusterer) {
+                if (markersToAdd.length > 0) markerClusterer.addMarkers(markersToAdd);
+            } else if (markersToAdd.length > 0) {
+                aMapInstance.add(markersToAdd);
+            }
+            console.log('addOrUpdateMarkers processed. Added to cluster/map:', markersToAdd.length);
+        };
+
+        /**
+         * 根据ID移除单个标记
+         * @param {string} markerId
+         */
+        window.removeMarkerById = function(markerId) {
+            if (!aMapInstance) return;
+            markerId = String(markerId);
+            let markerToRemove = allOverlays.markers[markerId];
+            if (markerToRemove) {
+                if (markerClusterer && markerClusterer.getMarkers().includes(markerToRemove)) {
+                    markerClusterer.removeMarker(markerToRemove);
+                } else {
+                    aMapInstance.remove(markerToRemove);
+                }
+                delete allOverlays.markers[markerId];
+                console.log('Marker removed:', markerId);
+            }
+        };
+        
+        /**
+         * 清除所有非用户位置的标记
+         */
+        window.clearAllOtherMarkers = function() {
+            if (markerClusterer) {
+                markerClusterer.clearMarkers(); // 清空聚合器中的点
+            }
+            // 清除未被聚合的点 (如果 addOrUpdateMarkers 中 useCluster=false)
+            for (const id in allOverlays.markers) {
+                if (userLocationMarker && userLocationMarker.getExtData().id === id) continue; //不清除用户自己
+                aMapInstance.remove(allOverlays.markers[id]);
+            }
+            allOverlays.markers = {}; // 重置存储
+            if (userLocationMarker) { // 确保用户标记还在
+                 allOverlays.markers[userLocationMarker.getExtData().id] = userLocationMarker;
+            }
+            console.log('Cleared all other markers.');
+        };
+
+        /**
+         * 切换所有标记的显示/隐藏 (不包括用户自身标记)
+         * @param {boolean} visible
+         */
+        window.setOtherMarkersVisibility = function(visible) {
+            // 注意：点聚合器本身没有直接的 hide/show 方法控制所有点。
+            // 通常做法是清除再重新添加，或者遍历每个marker实例。
+            // 这里采用遍历marker实例的方式。
+            let currentClusterMarkers = markerClusterer ? markerClusterer.getMarkers() : [];
+            
+            for (const id in allOverlays.markers) {
+                const marker = allOverlays.markers[id];
+                if (marker === userLocationMarker) continue; // 不操作用户自身标记
+                if (visible) {
+                    marker.show();
+                } else {
+                    marker.hide();
+                }
+            }
+            // 如果有点未被 `allOverlays.markers` 管理 (例如直接添加到聚合器), 
+            // 且聚合器本身没有隐藏，可能需要额外处理
+             console.log('Set other markers visibility to:', visible);
+        };
+
+
+        // --- 路径绘制相关 ---
+        /**
+         * 开始绘制或编辑路径
+         * @param {array} path - 经纬度数组 [[lng,lat], [lng,lat]...] (可选, 编辑时传入)
+         * @param {string} id - 路径ID (可选, 编辑时传入)
+         * @param {object} options - 绘制选项 (颜色、线宽等)
+         */
+        window.startEditPolyline = function(path, id, options) {
+            if (!aMapInstance) return;
+            if (activePolyEditor) activePolyEditor.close(); // 关闭上一个编辑器
+
+            let polyline;
+            if (id && allOverlays.polylines[id]) {
+                polyline = allOverlays.polylines[id];
+                if (path && path.length > 0) polyline.setPath(path); // 更新路径
+            } else {
+                polyline = new AMap.Polyline({
+                    path: path || [],
+                    strokeColor: options?.strokeColor || "#3366FF", 
+                    strokeOpacity: options?.strokeOpacity || 1.0,
+                    strokeWeight: options?.strokeWeight || 5,
+                    strokeStyle: options?.strokeStyle || "solid",
+                    // ... 其他属性
+                    extData: { id: id || ('polyline_' + Date.now()) }
+                });
+                aMapInstance.add(polyline);
+                allOverlays.polylines[polyline.getExtData().id] = polyline;
+            }
+            
+            activePolyEditor = new AMap.PolyEditor(aMapInstance, polyline);
+            activePolyEditor.open();
+
+            activePolyEditor.on('addnode', function(e) { // 增加一个节点时触发此事件
+                sendMessageToUniapp({ type: 'polylineEdited', id: polyline.getExtData().id, path: polyline.getPath().map(p=>[p.lng, p.lat]) });
+            });
+            activePolyEditor.on('adjust', function(e) { // 移动一个节点时触发此事件
+                 sendMessageToUniapp({ type: 'polylineEdited', id: polyline.getExtData().id, path: polyline.getPath().map(p=>[p.lng, p.lat]) });
+            });
+            activePolyEditor.on('end', function(e) { // 结束编辑时触发此事件
+                 sendMessageToUniapp({ type: 'polylineEditEnd', id: polyline.getExtData().id, path: polyline.getPath().map(p=>[p.lng, p.lat]), target: e.target.getExtData() });
+                 // e.target 就是被编辑的 Polyline 对象
+            });
+        };
+        
+        window.stopEditPolyline = function() {
+            if (activePolyEditor) {
+                activePolyEditor.close();
+                activePolyEditor = null;
+            }
+        };
+
+        window.addOrUpdatePolyline = function(data) { // {id, path: [[lng,lat],...], strokeColor, ...}
+             if (!aMapInstance) return;
+             let polyline = allOverlays.polylines[data.id];
+             if (polyline) {
+                 polyline.setPath(data.path);
+                 polyline.setOptions({ strokeColor: data.strokeColor, strokeWeight: data.strokeWeight }); //等
+             } else {
+                 polyline = new AMap.Polyline({
+                     path: data.path,
+                     strokeColor: data.strokeColor || "#FF33FF",
+                     strokeOpacity: 1,
+                     strokeWeight: 6,
+                     extData: { id: data.id }
+                 });
+                 aMapInstance.add(polyline);
+                 allOverlays.polylines[data.id] = polyline;
+             }
+        };
+
+
+        // --- 圆形区域相关 ---
+        /**
+         * 开始绘制或编辑圆形
+         * @param {object} circleData - { center: [lng, lat], radius: meters, id (optional), ...options }
+         */
+        window.startEditCircle = function(circleData) {
+            if (!aMapInstance) return;
+            if (activeCircleEditor) activeCircleEditor.close();
+
+            let circle;
+            const circleId = circleData.id || ('circle_' + Date.now());
+            if (allOverlays.circles[circleId]) {
+                circle = allOverlays.circles[circleId];
+                if(circleData.center) circle.setCenter(circleData.center);
+                if(typeof circleData.radius === 'number') circle.setRadius(circleData.radius);
+            } else {
+                circle = new AMap.Circle({
+                    center: circleData.center,
+                    radius: circleData.radius,
+                    strokeColor: circleData.strokeColor || "#FF33FF",
+                    strokeOpacity: circleData.strokeOpacity || 0.8,
+                    strokeWeight: circleData.strokeWeight || 2,
+                    fillColor: circleData.fillColor || "#1791fc",
+                    fillOpacity: circleData.fillOpacity || 0.4,
+                    extData: { id: circleId }
+                });
+                aMapInstance.add(circle);
+                allOverlays.circles[circleId] = circle;
+            }
+
+            activeCircleEditor = new AMap.CircleEditor(aMapInstance, circle);
+            activeCircleEditor.open();
+            activeCircleEditor.on('move', function(e) {
+                sendMessageToUniapp({ type: 'circleEdited', id: circle.getExtData().id, center: [e.lnglat.getLng(), e.lnglat.getLat()], radius: circle.getRadius() });
+            });
+            activeCircleEditor.on('adjust', function(e) {
+                 sendMessageToUniapp({ type: 'circleEdited', id: circle.getExtData().id, center: circle.getCenter().toJSON(), radius: e.radius });
+            });
+            activeCircleEditor.on('end', function(e) {
+                 sendMessageToUniapp({ type: 'circleEditEnd', id: circle.getExtData().id, center: circle.getCenter().toJSON(), radius: circle.getRadius(), target: e.target.getExtData() });
+            });
+        };
+        
+        window.stopEditCircle = function() {
+            if (activeCircleEditor) {
+                activeCircleEditor.close();
+                activeCircleEditor = null;
+            }
+        };
+        
+        window.addOrUpdateCircle = function(data) { // {id, center:[lng,lat], radius, strokeColor, ...}
+             if (!aMapInstance) return;
+             let circle = allOverlays.circles[data.id];
+             if (circle) {
+                 if(data.center) circle.setCenter(data.center);
+                 if(typeof data.radius === 'number') circle.setRadius(data.radius);
+                 circle.setOptions({ strokeColor: data.strokeColor, fillColor: data.fillColor }); //等
+             } else {
+                 circle = new AMap.Circle({
+                     center: data.center,
+                     radius: data.radius,
+                     strokeColor: data.strokeColor || "#00B2D5",
+                     fillColor: data.fillColor || "#00B2D5",
+                     fillOpacity: 0.3,
+                     extData: { id: data.id }
+                 });
+                 aMapInstance.add(circle);
+                 allOverlays.circles[data.id] = circle;
+             }
+        };
+
+
+        // --- 通信逻辑 ---
+        function sendMessageToUniapp(message) {
+            if (window.uni && window.uni.postMessage) {
+                window.uni.postMessage({ data: message });
+            } else {
+                // 兼容处理，如果 uni.webview.js 未加载或在非uni环境 (例如直接浏览器打开html调试)
+                if (window.parent && window.parent !== window) {
+                     window.parent.postMessage({ data: message }, '*');
+                } else {
+                    // console.warn('Cannot postMessage: uni object not found and not in iframe.');
+                }
+            }
+            // console.log('WebView: Message sent to uni-app:', message);
+        }
+        
+        // 接收来自 uni-app evalJS 的消息（主要用于调试或特殊场景）
+        window.onReceiveUniAppMessage = function(data) {
+            console.log('WebView: Message received from uni-app via evalJS:', data);
+            // 根据 data.action 执行操作
+        };
+
+        // 可以在 uni-app 的 webview loaded 事件后主动调用 initMap
+        // 例如: aMapInstance.setFitView(); // 初始化后让所有点在视野内
+    </script>
+</body>
+</html> 

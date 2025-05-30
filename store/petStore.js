@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { petApi } from '@/utils/api'
+import { pet } from '@/utils/api'
 
 export const usePetStore = defineStore('pet', {
   state: () => ({
@@ -20,7 +20,7 @@ export const usePetStore = defineStore('pet', {
       this.loading = true;
       this.error = null;
       try {
-        const response = await petApi.getPets();
+        const response = await pet.getMyPets();
         console.log('获取宠物列表响应:', response);
         this.setPets(response);
         return response;
@@ -53,7 +53,7 @@ export const usePetStore = defineStore('pet', {
       this.loading = true;
       this.error = null;
       try {
-        const response = await petApi.createPet(petData);
+        const response = await pet.addPet(petData);
         console.log('添加宠物响应:', response);
         this.pets.push(response);
         uni.setStorageSync('pets', JSON.stringify(this.pets));
@@ -77,7 +77,7 @@ export const usePetStore = defineStore('pet', {
       this.loading = true;
       this.error = null;
       try {
-        const response = await petApi.updatePet(petId, petData);
+        const response = await pet.updatePet(petId, petData);
         console.log('更新宠物响应:', response);
         const index = this.pets.findIndex(pet => pet._id === petId);
         if (index !== -1) {
@@ -105,7 +105,7 @@ export const usePetStore = defineStore('pet', {
       this.loading = true;
       this.error = null;
       try {
-        await petApi.deletePet(petId);
+        await pet.deletePet(petId);
         this.pets = this.pets.filter(pet => pet._id !== petId);
         uni.setStorageSync('pets', JSON.stringify(this.pets));
         

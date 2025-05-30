@@ -1,0 +1,199 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 遛宠派项目代码规范总览
+
+本规则文档定义了遛宠派项目的代码规范和组织结构，作为开发团队的指导原则。
+
+## 项目架构
+
+- **前端应用**：基于uni-app开发的移动应用
+- **后台管理系统**：基于Vue 3 + Element Plus的管理平台
+- **后端服务**：
+  - 5000端口：服务前端应用的API
+  - 5001端口：服务后台管理系统的API
+
+## 技术栈
+
+- **前端框架**：Vue 3、uni-app
+- **状态管理**：Pinia
+- **UI组件库**：Element Plus(管理端)、uni-ui(移动端)
+- **后端框架**：Express.js
+- **数据库**：MongoDB
+
+## API模块规范
+
+API模块负责与后端服务通信，封装所有HTTP请求。
+
+### 文件结构
+
+- [admin/src/api/index.js](mdc:admin/src/api/index.js) - API模块入口，导出所有API方法
+- [admin/src/api/story.js](mdc:admin/src/api/story.js) - 剧情相关API
+- [admin/src/api/modules/](mdc:admin/src/api/modules/) - 按功能模块化的API文件
+
+### 代码规范
+
+1. **命名规范**：
+   - 模块名使用camelCase
+   - API函数名应表明操作类型，如getUsers、createPost
+
+2. **请求格式**：
+   - 使用Axios作为HTTP客户端
+   - 所有请求必须通过封装的请求函数发起
+   - 统一处理错误和加载状态
+
+3. **响应处理**：
+   - 所有API响应必须遵循统一的格式
+   - 解构响应数据前进行必要的数据校验
+
+## 组件开发规范
+
+组件是应用的基础构建块，需遵循特定的设计和开发原则。
+
+### 文件结构
+
+- [admin/src/components/](mdc:admin/src/components/) - 存放通用组件
+- [admin/src/components/IconStatusMonitor.vue](mdc:admin/src/components/IconStatusMonitor.vue) - 图标状态监控组件示例
+
+### 组件设计原则
+
+1. **单一职责**：
+   - 每个组件只负责一个功能
+   - 复杂功能拆分为多个小组件
+
+2. **命名规范**：
+   - 组件文件名使用PascalCase (如：UserProfile.vue)
+   - 组件名应清晰表达其功能
+
+3. **组件结构**：
+   - 使用`<script setup>`语法
+   - 定义明确的props和emits
+   - 使用注释说明组件功能和使用方式
+
+4. **样式规范**：
+   - 使用scoped样式避免全局污染
+   - 遵循设计系统的颜色和间距规范
+   - 使用变量定义主题色和常用值
+
+5. **可复用性**：
+   - 设计组件时考虑复用场景
+   - 提供合理的默认值和必要的验证
+
+## 控制器开发规范
+
+控制器负责处理业务逻辑，连接视图和API服务。
+
+### 文件结构
+
+- [admin/src/controllers/](mdc:admin/src/controllers/) - 控制器目录
+- [admin/src/controllers/admin/](mdc:admin/src/controllers/admin/) - 管理员相关控制器
+
+### 开发规范
+
+1. **职责划分**：
+   - 控制器负责处理业务逻辑
+   - 不应包含视图相关代码
+   - 不应直接操作DOM
+
+2. **命名规范**：
+   - 控制器文件名使用camelCase
+   - 类名使用PascalCase
+   - 方法名应表明其功能
+
+3. **错误处理**：
+   - 统一处理API请求错误
+   - 提供友好的错误提示
+   - 记录错误信息便于调试
+
+4. **状态管理**：
+   - 合理使用Pinia存储全局状态
+   - 控制器间通信通过状态管理实现
+
+## 路由开发规范
+
+路由配置定义了应用的页面结构和导航逻辑。
+
+### 文件结构
+
+- [admin/src/router/index.js](mdc:admin/src/router/index.js) - 路由配置文件
+
+### 路由配置规范
+
+1. **路由定义**：
+   - 路径使用kebab-case (如：/user-profile)
+   - 组件名与路由名保持一致
+   - 懒加载大型组件提高性能
+
+2. **路由元信息**：
+   - 使用meta字段定义路由元信息
+   - 必要的元信息包括：title、权限要求等
+
+3. **路由导航守卫**：
+   - 全局守卫处理认证和权限
+   - 路由级别守卫处理特定逻辑
+
+4. **路由组织**：
+   - 按功能模块组织路由
+   - 使用嵌套路由表示层级关系
+   - 合理设置重定向规则
+
+## 视图开发规范
+
+视图是用户交互的直接界面，需要遵循特定的设计和开发原则。
+
+### 文件结构
+
+- [admin/src/views/](mdc:admin/src/views/) - 视图目录
+  - [admin/src/views/story/](mdc:admin/src/views/story/) - 剧情相关视图
+  - [admin/src/views/system/](mdc:admin/src/views/system/) - 系统相关视图
+  - [admin/src/views/pets/](mdc:admin/src/views/pets/) - 宠物相关视图
+  - [admin/src/views/users/](mdc:admin/src/views/users/) - 用户相关视图
+  - [admin/src/views/markers/](mdc:admin/src/views/markers/) - 标记相关视图
+  - [admin/src/views/admin/](mdc:admin/src/views/admin/) - 管理员相关视图
+  - [admin/src/views/merchants/](mdc:admin/src/views/merchants/) - 商家相关视图
+  - [admin/src/views/posts/](mdc:admin/src/views/posts/) - 帖子相关视图
+  - [admin/src/views/icons/](mdc:admin/src/views/icons/) - 图标相关视图
+  - [admin/src/views/dashboard/](mdc:admin/src/views/dashboard/) - 仪表盘视图
+  - [admin/src/views/error/](mdc:admin/src/views/error/) - 错误页面视图
+  - [admin/src/views/login/](mdc:admin/src/views/login/) - 登录相关视图
+  - [admin/src/views/layout/](mdc:admin/src/views/layout/) - 布局相关视图
+
+### 开发规范
+
+1. **视图组织**：
+   - 按功能模块组织视图文件
+   - 复杂视图拆分为多个子组件
+
+2. **命名规范**：
+   - 视图文件名使用kebab-case
+   - 文件名应能清晰表达页面内容
+
+3. **视图结构**：
+   - 使用Element Plus布局组件构建页面
+   - 表单验证遵循统一规则
+   - 表格、分页等共用组件保持风格一致
+
+4. **状态管理**：
+   - 视图组件应从store获取数据
+   - 避免在视图中直接调用API
+   - 使用计算属性处理派生状态
+
+5. **交互设计**：
+   - 提供清晰的用户反馈
+   - 操作确认和错误提示统一样式
+   - 页面加载状态显示一致
+
+## 文档和注释
+
+1. **代码注释**：
+   - 复杂逻辑必须有注释说明
+   - 公共组件和API必须有文档说明用法
+   - 使用JSDoc风格编写函数注释
+
+2. **项目文档**：
+   - 参考[开发规则文档](mdc:docs/development-rules.md)
+   - 参考[API接口规范](mdc:docs/api-specification.md)
+
+   - 所有文档使用MDC格式编写，增强交互性

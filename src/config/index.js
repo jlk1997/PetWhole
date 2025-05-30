@@ -3,7 +3,7 @@
  */
 
 // 环境变量处理
-const apiUrl = import.meta?.env?.VITE_API_URL || 'http://localhost:5000';
+const apiUrl = import.meta?.env?.VITE_API_URL || 'http://49.235.65.37:5000';
 
 // 开发环境
 const dev = {

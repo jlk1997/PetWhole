@@ -5,7 +5,7 @@ import config from '@/config/index.js'
 
 // 请求超时时间（毫秒）
 const TIMEOUT = config.TIMEOUT || 30000
-const BASE_URL = config.BASE_API_URL || 'http://localhost:5000'
+const BASE_URL = config.BASE_API_URL || 'http://49.235.65.37:5000'
 
 /**
  * 请求封装函数
